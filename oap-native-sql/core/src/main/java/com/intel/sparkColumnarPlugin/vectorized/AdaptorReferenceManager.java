@@ -17,13 +17,14 @@
 
 package com.intel.sparkColumnarPlugin.vectorized;
 
+import io.netty.buffer.ArrowBuf;
 import java.io.IOException;
-import java.lang.UnsupportedOperationException;
 import java.util.concurrent.atomic.AtomicInteger;
-
+import org.apache.arrow.memory.BaseAllocator;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.OwnershipTransferResult;
 import org.apache.arrow.memory.ReferenceManager;
+import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.util.Preconditions;
 
 import io.netty.buffer.ArrowBuf;
@@ -42,10 +43,14 @@ public class AdaptorReferenceManager implements ReferenceManager {
   private long nativeMemoryHolder;
   private int size = 0;
 
+  // Required by netty dependencies, but is never used.
+  private BaseAllocator allocator;
+
   AdaptorReferenceManager(long nativeMemoryHolder, int size) throws IOException {
     JniUtils.getInstance();
     this.nativeMemoryHolder = nativeMemoryHolder;
     this.size = size;
+    this.allocator = new RootAllocator(0);
   }
 
   @Override
@@ -110,7 +115,7 @@ public class AdaptorReferenceManager implements ReferenceManager {
 
   @Override
   public BufferAllocator getAllocator() {
-    return null;
+    return allocator;
   }
 
   @Override
