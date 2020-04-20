@@ -19,7 +19,7 @@ import scala.collection.mutable.ListBuffer
 class ColumnarShuffleWriter[K, V](
     shuffleBlockResolver: IndexShuffleBlockResolver,
     handle: BaseShuffleHandle[K, V, V],
-    mapId: Int,
+    mapId: Long,
     writeMetrics: ShuffleWriteMetricsReporter)
     extends ShuffleWriter[K, V]
     with Logging {
@@ -56,7 +56,7 @@ class ColumnarShuffleWriter[K, V](
         mapId,
         partitionLengths.toArray,
         null)
-      mapStatus = MapStatus(blockManager.shuffleServerId, partitionLengths.toArray)
+      mapStatus = MapStatus(blockManager.shuffleServerId, partitionLengths.toArray, mapId)
       return
     }
 
@@ -109,7 +109,7 @@ class ColumnarShuffleWriter[K, V](
         logError(s"Error while deleting temp file ${tmp.getAbsolutePath()}")
       }
     }
-    mapStatus = MapStatus(blockManager.shuffleServerId, partitionLengths.toArray)
+    mapStatus = MapStatus(blockManager.shuffleServerId, partitionLengths.toArray, mapId)
   }
 
   override def stop(success: Boolean): Option[MapStatus] = {
