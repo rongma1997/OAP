@@ -1,19 +1,20 @@
 package org.apache.spark.shuffle
 
-import java.io.{InputStream, OutputStream}
+import java.io.InputStream
 import java.util.concurrent.ConcurrentHashMap
 
 import org.apache.spark._
 import org.apache.spark.internal.Logging
 import org.apache.spark.serializer.SerializerManager
 import org.apache.spark.storage.BlockId
+import org.apache.spark.util.collection.OpenHashSet
 
 class ColumnarShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
 
   /**
    * A mapping from shuffle ids to the number of mappers producing output for those shuffles.
    */
-  private[this] val numMapsForShuffle = new ConcurrentHashMap[Int, Int]()
+  private[this] val taskIdMapsForShuffle = new ConcurrentHashMap[Int, OpenHashSet[Long]]()
 
   override val shuffleBlockResolver = new IndexShuffleBlockResolver(conf)
 
@@ -22,24 +23,21 @@ class ColumnarShuffleManager(conf: SparkConf) extends ShuffleManager with Loggin
    */
   override def registerShuffle[K, V, C](
       shuffleId: Int,
-      numMaps: Int,
       dependency: ShuffleDependency[K, V, C]): ShuffleHandle = {
     new ColumnarShuffleHandle[K, V](
       shuffleId,
-      numMaps,
       dependency.asInstanceOf[ShuffleDependency[K, V, V]])
   }
 
   /** Get a writer for a given partition. Called on executors by map tasks. */
   override def getWriter[K, V](
       handle: ShuffleHandle,
-      mapId: Int,
+      mapId: Long,
       context: TaskContext,
       metrics: ShuffleWriteMetricsReporter): ShuffleWriter[K, V] = {
-    numMapsForShuffle.putIfAbsent(
-      handle.shuffleId,
-      handle.asInstanceOf[BaseShuffleHandle[_, _, _]].numMaps)
-    val env = SparkEnv.get
+    val mapTaskIds =
+      taskIdMapsForShuffle.computeIfAbsent(handle.shuffleId, _ => new OpenHashSet[Long](16))
+    mapTaskIds.synchronized { mapTaskIds.add(context.taskAttemptId()) }
     handle match {
       case columnarShuffleHandle: ColumnarShuffleHandle[K @unchecked, V @unchecked] =>
         new ColumnarShuffleWriter(shuffleBlockResolver, columnarShuffleHandle, mapId, metrics)
@@ -61,27 +59,26 @@ class ColumnarShuffleManager(conf: SparkConf) extends ShuffleManager with Loggin
     val serialzerManager = new SerializerManager(
       SparkEnv.get.serializer,
       SparkEnv.get.conf,
-      SparkEnv.get.securityManager.getIOEncryptionKey()
-    ) {
+      SparkEnv.get.securityManager.getIOEncryptionKey()) {
       // Bypass the shuffle read compression
       override def wrapStream(blockId: BlockId, s: InputStream): InputStream = {
         wrapForEncryption(s)
       }
     }
+    val blocksByAddress = SparkEnv.get.mapOutputTracker
+      .getMapSizesByExecutorId(handle.shuffleId, startPartition, endPartition)
     new BlockStoreShuffleReader(
       handle.asInstanceOf[BaseShuffleHandle[K, _, C]],
-      startPartition,
-      endPartition,
+      blocksByAddress,
       context,
       metrics,
-      serialzerManager
-    )
+      serialzerManager)
   }
 
   /** Remove a shuffle's metadata from the ShuffleManager. */
   override def unregisterShuffle(shuffleId: Int): Boolean = {
-    Option(numMapsForShuffle.remove(shuffleId)).foreach { numMaps =>
-      (0 until numMaps).foreach { mapId =>
+    Option(taskIdMapsForShuffle.remove(shuffleId)).foreach { mapTaskIds =>
+      mapTaskIds.iterator.foreach { mapId =>
         shuffleBlockResolver.removeDataByMap(shuffleId, mapId)
       }
     }
@@ -92,10 +89,30 @@ class ColumnarShuffleManager(conf: SparkConf) extends ShuffleManager with Loggin
   override def stop(): Unit = {
     shuffleBlockResolver.stop()
   }
+
+  override def getReaderForRange[K, C](
+      handle: ShuffleHandle,
+      startMapIndex: Int,
+      endMapIndex: Int,
+      startPartition: Int,
+      endPartition: Int,
+      context: TaskContext,
+      metrics: ShuffleReadMetricsReporter): ShuffleReader[K, C] = {
+    val blocksByAddress = SparkEnv.get.mapOutputTracker.getMapSizesByRange(
+      handle.shuffleId,
+      startMapIndex,
+      endMapIndex,
+      startPartition,
+      endPartition)
+    new BlockStoreShuffleReader(
+      handle.asInstanceOf[BaseShuffleHandle[K, _, C]],
+      blocksByAddress,
+      context,
+      metrics)
+  }
 }
 
 private[spark] class ColumnarShuffleHandle[K, V](
     shuffleId: Int,
-    numMaps: Int,
     dependency: ShuffleDependency[K, V, V])
-    extends BaseShuffleHandle(shuffleId, numMaps, dependency) {}
+    extends BaseShuffleHandle(shuffleId, dependency) {}

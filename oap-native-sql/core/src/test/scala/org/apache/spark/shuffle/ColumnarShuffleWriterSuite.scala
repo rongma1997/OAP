@@ -77,10 +77,8 @@ class ColumnarShuffleWriterSuite extends FunSuite with BeforeAndAfterEach with B
 
     MockitoAnnotations.initMocks(this)
 
-    shuffleHandle = new ColumnarShuffleHandle[Int, ColumnarBatch](
-      shuffleId = 0,
-      numMaps = 2,
-      dependency = dependency)
+    shuffleHandle =
+      new ColumnarShuffleHandle[Int, ColumnarBatch](shuffleId = 0, dependency = dependency)
 
     when(dependency.serializedSchema).thenReturn(schema.toByteArray)
     when(dependency.partitioner).thenReturn(new HashPartitioner(11))
