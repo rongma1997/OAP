@@ -5,7 +5,10 @@ import java.nio.ByteBuffer
 
 import com.google.common.annotations.VisibleForTesting
 import com.google.common.io.Closeables
-import com.intel.sparkColumnarPlugin.vectorized.ShuffleSplitterJniWrapper
+import com.intel.sparkColumnarPlugin.vectorized.{
+  ArrowWritableColumnVector,
+  ShuffleSplitterJniWrapper
+}
 import org.apache.arrow.util.SchemaUtils
 import org.apache.arrow.vector.types.pojo.Schema
 import org.apache.spark._
@@ -45,18 +48,14 @@ class ColumnarShuffleWriter[K, V](
 
   private var nativeSplitter: Long = 0
 
-  private var partitionLengths: List[Long] = _
+  private var partitionLengths: Array[Long] = _
 
   @throws[IOException]
   override def write(records: Iterator[Product2[K, V]]): Unit = {
     if (!records.hasNext) {
-      partitionLengths = List[Long]()
-      shuffleBlockResolver.writeIndexFileAndCommit(
-        dep.shuffleId,
-        mapId,
-        partitionLengths.toArray,
-        null)
-      mapStatus = MapStatus(blockManager.shuffleServerId, partitionLengths.toArray, mapId)
+      partitionLengths = new Array[Long](dep.partitioner.numPartitions)
+      shuffleBlockResolver.writeIndexFileAndCommit(dep.shuffleId, mapId, partitionLengths, null)
+      mapStatus = MapStatus(blockManager.shuffleServerId, partitionLengths, mapId)
       return
     }
 
@@ -99,17 +98,13 @@ class ColumnarShuffleWriter[K, V](
     val tmp = Utils.tempFileWith(output)
     try {
       partitionLengths = writePartitionedFile(tmp)
-      shuffleBlockResolver.writeIndexFileAndCommit(
-        dep.shuffleId,
-        mapId,
-        partitionLengths.toArray,
-        tmp);
+      shuffleBlockResolver.writeIndexFileAndCommit(dep.shuffleId, mapId, partitionLengths, tmp)
     } finally {
       if (tmp.exists() && !tmp.delete()) {
-        logError(s"Error while deleting temp file ${tmp.getAbsolutePath()}")
+        logError(s"Error while deleting temp file ${tmp.getAbsolutePath}")
       }
     }
-    mapStatus = MapStatus(blockManager.shuffleServerId, partitionLengths.toArray, mapId)
+    mapStatus = MapStatus(blockManager.shuffleServerId, partitionLengths, mapId)
   }
 
   override def stop(success: Boolean): Option[MapStatus] = {
@@ -130,8 +125,8 @@ class ColumnarShuffleWriter[K, V](
         try {
           jniWrapper.getPartitionFileInfo(nativeSplitter).foreach { fileInfo =>
             {
-              val pid = fileInfo.getPid()
-              val file = new File(fileInfo.getFilePath())
+              val pid = fileInfo.getPid
+              val file = new File(fileInfo.getFilePath)
               if (file.exists()) {
                 if (!file.delete()) {
                   logError(s"Unable to delete file for partition ${pid}")
@@ -148,7 +143,7 @@ class ColumnarShuffleWriter[K, V](
   }
 
   @throws[IOException]
-  private def writePartitionedFile(outputFile: File): List[Long] = {
+  private def writePartitionedFile(outputFile: File): Array[Long] = {
 
     val lengths = new Array[Long](dep.partitioner.numPartitions)
     val out = new FileOutputStream(outputFile, true)
@@ -188,10 +183,10 @@ class ColumnarShuffleWriter[K, V](
       Closeables.close(out, threwException)
       writeMetrics.incWriteTime(System.nanoTime - writerStartTime)
     }
-    lengths.toList
+    lengths
   }
 
   @VisibleForTesting
-  def getPartitionLengths: List[Long] = partitionLengths
+  def getPartitionLengths: Array[Long] = partitionLengths
 
 }
