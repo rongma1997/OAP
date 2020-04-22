@@ -20,6 +20,7 @@ package org.apache.spark.shuffle
 import java.io.File
 import java.nio.file.Files
 
+import com.intel.sparkColumnarPlugin.vectorized.ArrowWritableColumnVector
 import org.apache.arrow.memory.RootAllocator
 import org.apache.arrow.vector.ipc.ArrowStreamReader
 import org.apache.arrow.vector.types.pojo.{ArrowType, Field, Schema}
@@ -28,11 +29,10 @@ import org.apache.arrow.vector.{FieldVector, IntVector}
 import org.apache.spark._
 import org.apache.spark.executor.TaskMetrics
 import org.apache.spark.serializer.JavaSerializer
-import org.apache.spark.sql.execution.vectorized.ArrowWritableColumnVector
 import org.apache.spark.sql.vectorized.ColumnarBatch
 import org.apache.spark.util.Utils
 import org.mockito.Answers.RETURNS_SMART_NULLS
-import org.mockito.ArgumentMatchers.{any, anyInt}
+import org.mockito.ArgumentMatchers.{any, anyInt, anyLong}
 import org.mockito.Mockito._
 import org.mockito.invocation.InvocationOnMock
 import org.mockito.{Mock, MockitoAnnotations}
@@ -94,7 +94,7 @@ class ColumnarShuffleWriterSuite extends FunSuite with BeforeAndAfterEach with B
       }
       null
     }.when(blockResolver)
-      .writeIndexFileAndCommit(anyInt, anyInt, any(classOf[Array[Long]]), any(classOf[File]))
+      .writeIndexFileAndCommit(anyInt, anyLong, any(classOf[Array[Long]]), any(classOf[File]))
   }
 
   override def afterEach(): Unit = {
@@ -144,7 +144,7 @@ class ColumnarShuffleWriterSuite extends FunSuite with BeforeAndAfterEach with B
     val writer = new ColumnarShuffleWriter[Int, ColumnarBatch](
       blockResolver,
       shuffleHandle,
-      0, // MapId
+      0L, // MapId
       taskContext.taskMetrics().shuffleWriteMetrics)
 
     writer.write(records)
