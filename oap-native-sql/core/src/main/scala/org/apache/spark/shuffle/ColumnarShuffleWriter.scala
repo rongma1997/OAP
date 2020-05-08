@@ -170,7 +170,7 @@ class ColumnarShuffleWriter[K, V](
             if (!file.delete()) {
               logError(s"Unable to delete file for partition ${pid}")
             } else {
-              logInfo(s"Deleting temporary shuffle file ${filePath} for partition ${pid}")
+              logDebug(s"Deleting temporary shuffle file ${filePath} for partition ${pid}")
             }
           } else {
             logWarning(

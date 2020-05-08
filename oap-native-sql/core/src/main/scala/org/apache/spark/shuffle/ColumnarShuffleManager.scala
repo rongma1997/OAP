@@ -56,7 +56,7 @@ class ColumnarShuffleManager(conf: SparkConf) extends ShuffleManager with Loggin
       endPartition: Int,
       context: TaskContext,
       metrics: ShuffleReadMetricsReporter): ShuffleReader[K, C] = {
-    val serialzerManager = new SerializerManager(
+    val serializerManager = new SerializerManager(
       SparkEnv.get.serializer,
       SparkEnv.get.conf,
       SparkEnv.get.securityManager.getIOEncryptionKey()) {
@@ -72,7 +72,7 @@ class ColumnarShuffleManager(conf: SparkConf) extends ShuffleManager with Loggin
       blocksByAddress,
       context,
       metrics,
-      serialzerManager)
+      serializerManager)
   }
 
   /** Remove a shuffle's metadata from the ShuffleManager. */
