@@ -25,6 +25,7 @@ import com.intel.sparkColumnarPlugin.vectorized.{
 }
 import org.apache.arrow.vector.types.pojo.Schema
 import org.apache.arrow.vector.{FieldVector, IntVector}
+import org.apache.spark._
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
 import org.apache.spark.serializer.Serializer
@@ -51,7 +52,6 @@ import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
 import org.apache.spark.sql.util.ArrowUtils
 import org.apache.spark.sql.vectorized.ColumnarBatch
 import org.apache.spark.util.MutablePair
-import org.apache.spark._
 
 import scala.collection.JavaConverters._
 
@@ -73,7 +73,6 @@ class ColumnarShuffleExchangeExec(
 
   override def supportsColumnar: Boolean = true
 
-  // Disable code generation
   @transient lazy val inputColumnarRDD: RDD[ColumnarBatch] = child.executeColumnar()
 
   private val serializer: Serializer = new ArrowColumnarBatchSerializer(longMetric("dataSize"))
@@ -262,7 +261,7 @@ case class ClosablePairedColumnarBatchIterator(iter: Iterator[(Int, ColumnarBatc
 
   private def closeCurrentBatch(): Unit = {
     if (cur != null) {
-      logInfo("Shuffle ColumnarBatch closed")
+      logDebug("Shuffle ColumnarBatch closed")
       cur match { case (_, cb: ColumnarBatch) => cb.close() }
       cur = null
     }

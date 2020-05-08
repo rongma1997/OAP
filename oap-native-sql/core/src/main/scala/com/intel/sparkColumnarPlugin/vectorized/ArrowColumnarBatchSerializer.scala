@@ -26,12 +26,7 @@ import org.apache.arrow.vector.ipc.ArrowStreamReader
 import org.apache.arrow.vector.{VectorLoader, VectorSchemaRoot}
 import org.apache.spark.SparkEnv
 import org.apache.spark.internal.Logging
-import org.apache.spark.serializer.{
-  DeserializationStream,
-  SerializationStream,
-  Serializer,
-  SerializerInstance
-}
+import org.apache.spark.serializer.{DeserializationStream, SerializationStream, Serializer, SerializerInstance}
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.util.ArrowUtils
@@ -86,6 +81,7 @@ private class ArrowColumnarBatchSerializerInstance(dataSize: SQLMetric)
       @throws(classOf[EOFException])
       override def readValue[T: ClassTag](): T = {
         if (reader != null && batchLoaded) {
+          root.clear()
           batchLoaded = reader.loadNextBatch()
           if (batchLoaded) {
             assert(
@@ -125,10 +121,9 @@ private class ArrowColumnarBatchSerializerInstance(dataSize: SQLMetric)
       }
 
       override def close(): Unit = {
-        if (reader != null) reader.close(false)
+        if (reader != null) reader.close(true)
         if (allocator != null) allocator.close()
         if (jniWrapper != null) jniWrapper.close(schemaHolderId)
-        in.close()
       }
 
       private def decompressVectors(): Unit = {
@@ -166,8 +161,7 @@ private class ArrowColumnarBatchSerializerInstance(dataSize: SQLMetric)
           bufBS.toBitMask)
         val builerImpl = new ArrowRecordBatchBuilderImpl(builder)
         val decompressedRecordBatch = builerImpl.build
-        // vectors previously loaded into the root are released by arrow when loading new vectors
-        // so don't bother releasing/closing them here
+        root.clear()
         vectorLoader.load(decompressedRecordBatch)
       }
     }
