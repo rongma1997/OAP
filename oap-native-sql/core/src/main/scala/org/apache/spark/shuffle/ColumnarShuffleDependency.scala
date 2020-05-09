@@ -3,6 +3,7 @@ package org.apache.spark.shuffle
 import org.apache.spark._
 import org.apache.spark.rdd.RDD
 import org.apache.spark.serializer.Serializer
+import org.apache.spark.sql.execution.metric.SQLMetric
 
 import scala.reflect.ClassTag
 
@@ -21,6 +22,7 @@ import scala.reflect.ClassTag
  * @param mapSideCombine whether to perform partial aggregation (also known as map-side combine)
  * @param shuffleWriterProcessor the processor to control the write behavior in ShuffleMapTask
  * @param serializedSchema serialized [[org.apache.arrow.vector.types.pojo.Schema]] for ColumnarBatch
+ * @param dataSize for shuffle data size tracking
  */
 class ColumnarShuffleDependency[K: ClassTag, V: ClassTag, C: ClassTag](
     @transient private val _rdd: RDD[_ <: Product2[K, V]],
@@ -30,7 +32,8 @@ class ColumnarShuffleDependency[K: ClassTag, V: ClassTag, C: ClassTag](
     override val aggregator: Option[Aggregator[K, V, C]] = None,
     override val mapSideCombine: Boolean = false,
     override val shuffleWriterProcessor: ShuffleWriteProcessor = new ShuffleWriteProcessor,
-    val serializedSchema: Array[Byte])
+    val serializedSchema: Array[Byte],
+    val dataSize: SQLMetric)
     extends ShuffleDependency[K, V, C](
       _rdd,
       partitioner,

@@ -29,6 +29,7 @@ import org.apache.arrow.vector.{FieldVector, IntVector}
 import org.apache.spark._
 import org.apache.spark.executor.TaskMetrics
 import org.apache.spark.serializer.JavaSerializer
+import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.vectorized.ColumnarBatch
 import org.apache.spark.util.Utils
 import org.mockito.Answers.RETURNS_SMART_NULLS
@@ -80,9 +81,10 @@ class ColumnarShuffleWriterSuite extends FunSuite with BeforeAndAfterEach with B
     shuffleHandle =
       new ColumnarShuffleHandle[Int, ColumnarBatch](shuffleId = 0, dependency = dependency)
 
-    when(dependency.serializedSchema).thenReturn(schema.toByteArray)
     when(dependency.partitioner).thenReturn(new HashPartitioner(11))
     when(dependency.serializer).thenReturn(new JavaSerializer(conf))
+    when(dependency.serializedSchema).thenReturn(schema.toByteArray)
+    when(dependency.dataSize).thenReturn(SQLMetrics.createSizeMetric(sc, "data size"))
     when(taskContext.taskMetrics()).thenReturn(taskMetrics)
     when(blockResolver.getDataFile(0, 0)).thenReturn(outputFile)
 

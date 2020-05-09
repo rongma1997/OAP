@@ -26,8 +26,12 @@ import org.apache.arrow.vector.ipc.ArrowStreamReader
 import org.apache.arrow.vector.{VectorLoader, VectorSchemaRoot}
 import org.apache.spark.SparkEnv
 import org.apache.spark.internal.Logging
-import org.apache.spark.serializer.{DeserializationStream, SerializationStream, Serializer, SerializerInstance}
-import org.apache.spark.sql.execution.metric.SQLMetric
+import org.apache.spark.serializer.{
+  DeserializationStream,
+  SerializationStream,
+  Serializer,
+  SerializerInstance
+}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.util.ArrowUtils
 import org.apache.spark.sql.vectorized.{ColumnVector, ColumnarBatch}
@@ -37,16 +41,14 @@ import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
 import scala.reflect.ClassTag
 
-class ArrowColumnarBatchSerializer(dataSize: SQLMetric) extends Serializer with Serializable {
+class ArrowColumnarBatchSerializer extends Serializer with Serializable {
 
   /** Creates a new [[SerializerInstance]]. */
   override def newInstance(): SerializerInstance =
-    new ArrowColumnarBatchSerializerInstance(dataSize)
+    new ArrowColumnarBatchSerializerInstance
 }
 
-private class ArrowColumnarBatchSerializerInstance(dataSize: SQLMetric)
-    extends SerializerInstance
-    with Logging {
+private class ArrowColumnarBatchSerializerInstance extends SerializerInstance with Logging {
 
   override def deserializeStream(in: InputStream): DeserializationStream = {
     new DeserializationStream {
@@ -122,7 +124,6 @@ private class ArrowColumnarBatchSerializerInstance(dataSize: SQLMetric)
 
       override def close(): Unit = {
         if (reader != null) reader.close(true)
-        if (allocator != null) allocator.close()
         if (jniWrapper != null) jniWrapper.close(schemaHolderId)
       }
 
@@ -161,8 +162,11 @@ private class ArrowColumnarBatchSerializerInstance(dataSize: SQLMetric)
           bufBS.toBitMask)
         val builerImpl = new ArrowRecordBatchBuilderImpl(builder)
         val decompressedRecordBatch = builerImpl.build
+
         root.clear()
-        vectorLoader.load(decompressedRecordBatch)
+        if (decompressedRecordBatch != null) {
+          vectorLoader.load(decompressedRecordBatch)
+        }
       }
     }
   }
