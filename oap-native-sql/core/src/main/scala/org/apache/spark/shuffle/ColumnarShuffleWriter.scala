@@ -14,6 +14,7 @@ import org.apache.arrow.vector.types.pojo.Schema
 import org.apache.spark._
 import org.apache.spark.internal.Logging
 import org.apache.spark.scheduler.MapStatus
+import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.vectorized.ColumnarBatch
 import org.apache.spark.util.Utils
 
@@ -27,7 +28,7 @@ class ColumnarShuffleWriter[K, V](
     extends ShuffleWriter[K, V]
     with Logging {
 
-  private val dep = handle.dependency
+  private val dep = handle.dependency.asInstanceOf[ColumnarShuffleDependency[K, V, V]]
 
   private val conf = SparkEnv.get.conf
 
@@ -60,8 +61,7 @@ class ColumnarShuffleWriter[K, V](
     }
 
     if (nativeSplitter == 0) {
-      val schema: Schema = Schema.deserialize(
-        ByteBuffer.wrap(dep.asInstanceOf[ColumnarShuffleDependency[K, V, V]].serializedSchema))
+      val schema: Schema = Schema.deserialize(ByteBuffer.wrap(dep.serializedSchema))
       nativeSplitter = jniWrapper.make(SchemaUtils.get.serialize(schema))
       if (compressionEnabled) {
         jniWrapper.setCompressionCodec(nativeSplitter, compressionCodec)
@@ -82,6 +82,7 @@ class ColumnarShuffleWriter[K, V](
             bufSizes += buffer.readableBytes()
           }
       }
+      dep.dataSize.add(bufSizes.sum)
 
       val startTime = System.nanoTime()
       jniWrapper.split(nativeSplitter, columnarBatch.numRows, bufAddrs.toArray, bufSizes.toArray)

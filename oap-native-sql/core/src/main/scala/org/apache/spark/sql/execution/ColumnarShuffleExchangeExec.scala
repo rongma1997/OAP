@@ -75,7 +75,7 @@ class ColumnarShuffleExchangeExec(
 
   @transient lazy val inputColumnarRDD: RDD[ColumnarBatch] = child.executeColumnar()
 
-  private val serializer: Serializer = new ArrowColumnarBatchSerializer(longMetric("dataSize"))
+  private val serializer: Serializer = new ArrowColumnarBatchSerializer
 
   @transient
   lazy val columnarShuffleDependency: ShuffleDependency[Int, ColumnarBatch, ColumnarBatch] = {
@@ -84,7 +84,8 @@ class ColumnarShuffleExchangeExec(
       child.output,
       outputPartitioning,
       serializer,
-      writeMetrics)
+      writeMetrics,
+      longMetric("dataSize"))
   }
 
   def createColumnarShuffledRDD(
@@ -112,8 +113,8 @@ object ColumnarShuffleExchangeExec {
       outputAttributes: Seq[Attribute],
       newPartitioning: Partitioning,
       serializer: Serializer,
-      writeMetrics: Map[String, SQLMetric])
-    : ShuffleDependency[Int, ColumnarBatch, ColumnarBatch] = {
+      writeMetrics: Map[String, SQLMetric],
+      dataSize: SQLMetric): ShuffleDependency[Int, ColumnarBatch, ColumnarBatch] = {
 
     val arrowSchema: Schema =
       ArrowUtils.toArrowSchema(
@@ -219,7 +220,8 @@ object ColumnarShuffleExchangeExec {
         new PartitionIdPassthrough(newPartitioning.numPartitions),
         serializer,
         shuffleWriterProcessor = createShuffleWriteProcessor(writeMetrics),
-        serializedSchema = arrowSchema.toByteArray)
+        serializedSchema = arrowSchema.toByteArray,
+        dataSize = dataSize)
 
     dependency
   }
