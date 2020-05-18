@@ -29,7 +29,9 @@ import org.apache.arrow.vector.{FieldVector, IntVector}
 import org.apache.spark._
 import org.apache.spark.executor.TaskMetrics
 import org.apache.spark.serializer.JavaSerializer
-import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
+import org.apache.spark.shuffle.sort.ColumnarShuffleHandle
+import org.apache.spark.sql.execution.metric.SQLMetrics
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.vectorized.ColumnarBatch
 import org.apache.spark.util.Utils
 import org.mockito.Answers.RETURNS_SMART_NULLS
@@ -37,26 +39,24 @@ import org.mockito.ArgumentMatchers.{any, anyInt, anyLong}
 import org.mockito.Mockito._
 import org.mockito.invocation.InvocationOnMock
 import org.mockito.{Mock, MockitoAnnotations}
-import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach, FunSuite}
 
 import scala.collection.JavaConverters._
 
-class ColumnarShuffleWriterSuite extends FunSuite with BeforeAndAfterEach with BeforeAndAfterAll {
+class ColumnarShuffleWriterSuite extends SharedSparkSession {
   @Mock(answer = RETURNS_SMART_NULLS) private var taskContext: TaskContext = _
   @Mock(answer = RETURNS_SMART_NULLS) private var blockResolver: IndexShuffleBlockResolver = _
   @Mock(answer = RETURNS_SMART_NULLS) private var dependency
     : ColumnarShuffleDependency[Int, ColumnarBatch, ColumnarBatch] = _
 
+  override def sparkConf: SparkConf =
+    super.sparkConf
+      .setAppName("test ColumnarShuffleWriter")
+      .set("spark.file.transferTo", "true")
+      .set("spark.shuffle.manager", "org.apache.spark.shuffle.sort.ColumnarShuffleManager")
+
   private var taskMetrics: TaskMetrics = _
   private var tempDir: File = _
   private var outputFile: File = _
-  private val conf: SparkConf = new SparkConf(loadDefaults = false)
-  private val sc = new SparkContext(
-    "local",
-    "test",
-    conf
-      .set("spark.file.transferTo", "true")
-      .set("spark.shuffle.manager", "org.apache.spark.shuffle.ColumnarShuffleManager"))
 
   private var shuffleHandle: ColumnarShuffleHandle[Int, ColumnarBatch] = _
   private val schema = new Schema(
@@ -70,8 +70,6 @@ class ColumnarShuffleWriterSuite extends FunSuite with BeforeAndAfterEach with B
   override def beforeEach() = {
     super.beforeEach()
 
-    SparkEnv.set(sc.env)
-
     tempDir = Utils.createTempDir()
     outputFile = File.createTempFile("shuffle", null, tempDir)
     taskMetrics = new TaskMetrics
@@ -82,9 +80,10 @@ class ColumnarShuffleWriterSuite extends FunSuite with BeforeAndAfterEach with B
       new ColumnarShuffleHandle[Int, ColumnarBatch](shuffleId = 0, dependency = dependency)
 
     when(dependency.partitioner).thenReturn(new HashPartitioner(11))
-    when(dependency.serializer).thenReturn(new JavaSerializer(conf))
+    when(dependency.serializer).thenReturn(new JavaSerializer(sparkConf))
     when(dependency.serializedSchema).thenReturn(schema.toByteArray)
-    when(dependency.dataSize).thenReturn(SQLMetrics.createSizeMetric(sc, "data size"))
+    when(dependency.dataSize)
+      .thenReturn(SQLMetrics.createSizeMetric(spark.sparkContext, "data size"))
     when(taskContext.taskMetrics()).thenReturn(taskMetrics)
     when(blockResolver.getDataFile(0, 0)).thenReturn(outputFile)
 

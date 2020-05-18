@@ -168,6 +168,10 @@ object ColumnarShuffleExchangeExec {
     val isRoundRobin = newPartitioning.isInstanceOf[RoundRobinPartitioning] &&
       newPartitioning.numPartitions > 1
 
+    // RDD passed to ShuffleDependency should be the form of key-value pairs.
+    // As for Columnar Shuffle, we create a new column to store the partition ids for each row in
+    // one ColumnarBatch, and append it from the front. ColumnarShuffleWriter will extract partition ids
+    // from ColumnarBatch other than read the "key" part. Thus in Columnar Shuffle we never use the "key" part.
     val rddWithDummyPartitionIds: RDD[Product2[Int, ColumnarBatch]] = {
       val isOrderSensitive = isRoundRobin && !SQLConf.get.sortBeforeRepartition
 
@@ -175,7 +179,6 @@ object ColumnarShuffleExchangeExec {
         (_, cbIterator) => {
           newPartitioning match {
             case SinglePartition =>
-              // fixme hanle empty cb (cb.numRows == 0 || cb.numCols == 0)
               ClosablePairedColumnarBatchIterator(cbIterator.map(cb => {
                 val pids = Array.fill(cb.numRows)(0)
                 (0, pushFrontPartitionIds(pids, cb))
