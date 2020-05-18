@@ -48,10 +48,15 @@ class Splitter::Impl {
                        case arrow::Int32Type::type_id:
                        case arrow::UInt32Type::type_id:
                        case arrow::FloatType::type_id:
+                       case arrow::Date32Type::type_id:
+                       case arrow::Time32Type::type_id:
                          return Type::SHUFFLE_4BYTE;
                        case arrow::Int64Type::type_id:
                        case arrow::UInt64Type::type_id:
                        case arrow::DoubleType::type_id:
+                       case arrow::Date64Type::type_id:
+                       case arrow::Time64Type::type_id:
+                       case arrow::TimestampType::type_id:
                          return Type::SHUFFLE_8BYTE;
                        case arrow::BinaryType::type_id:
                        case arrow::StringType::type_id:

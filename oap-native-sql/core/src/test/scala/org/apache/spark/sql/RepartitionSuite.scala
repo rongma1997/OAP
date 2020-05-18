@@ -16,15 +16,13 @@ class RepartitionSuite extends QueryTest with SharedSparkSession {
 
   override def sparkConf: SparkConf =
     super.sparkConf
+      .setAppName("test repartition")
       .set("spark.sql.parquet.columnarReaderBatchSize", "4096")
       .set("spark.sql.sources.useV1SourceList", "avro")
       .set("spark.sql.join.preferSortMergeJoin", "false")
       .set("spark.sql.extensions", "com.intel.sparkColumnarPlugin.ColumnarPlugin")
-      .set("spark.shuffle.manager", "org.apache.spark.shuffle.ColumnarShuffleManager")
-      //      .set("spark.shuffle.compress", "false")
+      .set("spark.shuffle.manager", "org.apache.spark.shuffle.sort.ColumnarShuffleManager")
       .set("spark.sql.codegen.wholeStage", "false")
-      .set("spark.eventLog.enabled", "true")
-      .set("spark.eventLog.dir", s"${System.getProperty("user.home")}/spark/sparklog")
 
   def checkCoulumnarExec(data: DataFrame) = {
     val found = data.queryExecution.executedPlan
