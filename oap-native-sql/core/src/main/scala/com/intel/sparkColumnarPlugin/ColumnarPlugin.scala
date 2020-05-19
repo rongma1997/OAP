@@ -17,8 +17,9 @@
 
 package com.intel.sparkColumnarPlugin
 
-import com.intel.sparkColumnarPlugin.execution._
+import java.util.Locale
 
+import com.intel.sparkColumnarPlugin.execution._
 import org.apache.spark.internal.Logging
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.catalyst.rules.Rule
@@ -74,11 +75,21 @@ case class ColumnarPreOverrides(conf: SparkConf) extends Rule[SparkPlan] {
         plan.withNewChildren(children)
       }
     case plan: ShuffleExchangeExec =>
-      logDebug(s"Columnar Processing for ${plan.getClass} is currently supported.")
-      new ColumnarShuffleExchangeExec(
-        plan.outputPartitioning,
-        replaceWithColumnarPlan(plan.child),
-        plan.canChangeNumPartitions)
+      val columnarShuffleEnabled = conf
+        .get("spark.shuffle.manager", "sort")
+        .equals("org.apache.spark.shuffle.sort.ColumnarShuffleManager")
+      if (columnarShuffleEnabled) {
+        val child = replaceWithColumnarPlan(plan.child)
+        logDebug(s"Columnar Processing for ${plan.getClass} is currently supported.")
+        new ColumnarShuffleExchangeExec(
+          plan.outputPartitioning,
+          child,
+          plan.canChangeNumPartitions)
+      } else {
+        val children = plan.children.map(replaceWithColumnarPlan)
+        logDebug(s"Columnar Processing for ${plan.getClass} is not currently supported.")
+        plan.withNewChildren(children)
+      }
     case plan: ShuffledHashJoinExec =>
       val left = replaceWithColumnarPlan(plan.left)
       val right = replaceWithColumnarPlan(plan.right)
