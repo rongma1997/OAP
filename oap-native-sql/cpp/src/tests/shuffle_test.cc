@@ -26,7 +26,7 @@ class ShuffleTest : public ::testing::Test {
     auto f_string = field("f_string", arrow::utf8());
 
     schema_ = arrow::schema({f_pid, f_na, f_int8, f_int16, f_uint64, f_bool, f_string});
-    ASSERT_NOT_OK(schema_->RemoveField(0, &writer_schema_));
+    ARROW_ASSIGN_OR_THROW(writer_schema_, schema_->RemoveField(0))
 
     ARROW_ASSIGN_OR_THROW(splitter_, Splitter::Make(schema_));
   }

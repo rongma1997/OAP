@@ -63,6 +63,7 @@ private class ArrowColumnarBatchSerializerInstance extends SerializerInstance wi
       private var reader: ArrowStreamReader = _
       private var root: VectorSchemaRoot = _
       private var vectors: Array[ColumnVector] = _
+      private var cb: ColumnarBatch = _
       private var batchLoaded = true
 
       private var jniWrapper: ShuffleDecompressionJniWrapper = _
@@ -84,7 +85,18 @@ private class ArrowColumnarBatchSerializerInstance extends SerializerInstance wi
       override def readValue[T: ClassTag](): T = {
         if (reader != null && batchLoaded) {
           root.clear()
-          batchLoaded = reader.loadNextBatch()
+          if (cb != null) {
+            cb.close()
+            cb = null
+          }
+
+          try {
+            batchLoaded = reader.loadNextBatch()
+          } catch {
+            case ioe: IOException =>
+              this.close()
+              logError("Failed to load next RecordBatch", ioe)
+          }
           if (batchLoaded) {
             assert(
               root.getRowCount <= columnBatchSize,
@@ -95,8 +107,18 @@ private class ArrowColumnarBatchSerializerInstance extends SerializerInstance wi
               decompressVectors()
             }
 
-            val batch = new ColumnarBatch(vectors, root.getRowCount)
-            batch.asInstanceOf[T]
+            val newFieldVectors = root.getFieldVectors.asScala.map { vector =>
+              val newVector = vector.getField.createVector(allocator)
+              vector.makeTransferPair(newVector).transfer()
+              newVector
+            }.asJava
+
+            vectors = ArrowWritableColumnVector
+              .loadColumns(root.getRowCount, newFieldVectors)
+              .toArray[ColumnVector]
+
+            cb = new ColumnarBatch(vectors, root.getRowCount)
+            cb.asInstanceOf[T]
           } else {
             this.close()
             throw new EOFException
@@ -110,9 +132,6 @@ private class ArrowColumnarBatchSerializerInstance extends SerializerInstance wi
               this.close()
               throw new EOFException
           }
-          vectors = ArrowWritableColumnVector
-            .loadColumns(root.getRowCount, root.getFieldVectors)
-            .toArray[ColumnVector]
           readValue()
         }
       }
@@ -123,6 +142,7 @@ private class ArrowColumnarBatchSerializerInstance extends SerializerInstance wi
       }
 
       override def close(): Unit = {
+        if (cb != null) cb.close()
         if (reader != null) reader.close(true)
         if (jniWrapper != null) jniWrapper.close(schemaHolderId)
       }
@@ -141,7 +161,11 @@ private class ArrowColumnarBatchSerializerInstance extends SerializerInstance wi
         var bufIdx = 0
 
         root.getFieldVectors.asScala.foreach { vector =>
-          if (vector.getNullCount == 0 || vector.getNullCount == vector.getValueCount) {
+//          if (vector.getNullCount == 0 || vector.getNullCount == vector.getValueCount) {
+          val validityBuf = vector.getValidityBuffer
+          if (validityBuf
+                .capacity() < 8 || java.lang.Long.bitCount(validityBuf.getLong(0)) == 64 ||
+              java.lang.Long.bitCount(validityBuf.getLong(0)) == 0) {
             bufBS.add(bufIdx)
           }
           vector.getBuffers(false).foreach { buffer =>

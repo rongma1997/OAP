@@ -26,7 +26,7 @@ class Splitter::Impl {
 
   arrow::Status Init() {
     // remove partition id field since we don't need it while splitting
-    RETURN_NOT_OK(schema_->RemoveField(0, &writer_schema_));
+    ARROW_ASSIGN_OR_RAISE(writer_schema_, schema_->RemoveField(0))
 
     const auto& fields = writer_schema_->fields();
     std::vector<Type::typeId> result;
@@ -67,7 +67,8 @@ class Splitter::Impl {
                        case arrow::NullType::type_id:
                          return Type::SHUFFLE_NULL;
                        default:
-                         std::cout << field->ToString() << " field type id " << arrow_type_id << std::endl;
+                         std::cout << field->ToString() << " field type id "
+                                   << arrow_type_id << std::endl;
                          return Type::SHUFFLE_NOT_IMPLEMENTED;
                      }
                    });
@@ -126,8 +127,8 @@ class Splitter::Impl {
         src_binary_arr.push_back(
             std::static_pointer_cast<arrow::BinaryArray>(record_batch.column(i + 1)));
       } else if (column_type_id_[i] == Type::SHUFFLE_LARGE_BINARY) {
-        src_large_binary_arr.push_back(
-            std::static_pointer_cast<arrow::LargeBinaryArray>(record_batch.column(i + 1)));
+        src_large_binary_arr.push_back(std::static_pointer_cast<arrow::LargeBinaryArray>(
+            record_batch.column(i + 1)));
       } else if (column_type_id_[i] != Type::SHUFFLE_NULL) {
         if (record_batch.column_data(i + 1)->GetNullCount() == 0) {
           // null bitmap may be nullptr
@@ -151,20 +152,20 @@ class Splitter::Impl {
       auto pid = pid_cast_p[i];
       if (pid_to_new_id_.find(pid) == pid_to_new_id_.end()) {
         auto temp_dir = GenerateUUID();
-        while ((*fs_->GetFileInfo(temp_dir)).type() !=
-               arrow::fs::FileType::NotFound) {
+        while ((*fs_->GetFileInfo(temp_dir)).type() != arrow::fs::FileType::NotFound) {
           temp_dir = GenerateUUID();
         }
         RETURN_NOT_OK(fs_->CreateDir(temp_dir));
-        auto temp_file_path = arrow::fs::internal::ConcatAbstractPath(
-                                  fs_base_dir_->path().ToString(),
-                                  (*fs_->GetFileInfo(temp_dir)).path()) +
-                              "/data";
+        auto temp_file_path =
+            arrow::fs::internal::ConcatAbstractPath(
+                fs_base_dir_->path().ToString(), (*fs_->GetFileInfo(temp_dir)).path()) +
+            "/data";
         temp_files.push_back({pid, temp_file_path});
 
-        ARROW_ASSIGN_OR_RAISE(auto writer, PartitionWriter::Create(pid, buffer_size_, last_type_,
-                                              column_type_id_, writer_schema_,
-                                              temp_file_path, compression_codec_));
+        ARROW_ASSIGN_OR_RAISE(
+            auto writer,
+            PartitionWriter::Create(pid, buffer_size_, last_type_, column_type_id_,
+                                    writer_schema_, temp_file_path, compression_codec_));
         pid_writer_.push_back(std::move(writer));
         new_id.push_back(num_partitiions_);
         pid_to_new_id_[pid] = num_partitiions_++;
@@ -240,7 +241,9 @@ class Splitter::Impl {
 
   void set_buffer_size(int64_t buffer_size) { buffer_size_ = buffer_size; }
 
-  void set_compression_codec(arrow::Compression::type compression_codec) { compression_codec_ = compression_codec; }
+  void set_compression_codec(arrow::Compression::type compression_codec) {
+    compression_codec_ = compression_codec;
+  }
 
   std::shared_ptr<arrow::Schema> schema() const { return schema_; }
 
