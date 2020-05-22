@@ -20,11 +20,8 @@ package com.intel.sparkColumnarPlugin.vectorized;
 import io.netty.buffer.ArrowBuf;
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicInteger;
-import org.apache.arrow.memory.BaseAllocator;
-import org.apache.arrow.memory.BufferAllocator;
-import org.apache.arrow.memory.OwnershipTransferResult;
-import org.apache.arrow.memory.ReferenceManager;
-import org.apache.arrow.memory.RootAllocator;
+
+import org.apache.arrow.memory.*;
 import org.apache.arrow.util.Preconditions;
 
 import io.netty.buffer.ArrowBuf;
@@ -110,7 +107,7 @@ public class AdaptorReferenceManager implements ReferenceManager {
 
   @Override
   public OwnershipTransferResult transferOwnership(ArrowBuf sourceBuffer, BufferAllocator targetAllocator) {
-    throw new UnsupportedOperationException();
+    return NO_OP.transferOwnership(sourceBuffer, targetAllocator);
   }
 
   @Override

@@ -5,8 +5,8 @@
 #include <arrow/io/file.h>
 #include <arrow/ipc/writer.h>
 #include <arrow/status.h>
-#include <vector>
 #include <arrow/util/compression.h>
+#include <vector>
 #include "shuffle/type.h"
 
 namespace sparkcolumnarplugin {

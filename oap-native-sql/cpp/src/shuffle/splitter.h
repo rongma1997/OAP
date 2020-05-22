@@ -3,11 +3,11 @@
 #include <arrow/array.h>
 #include <arrow/record_batch.h>
 #include <arrow/type.h>
+#include <arrow/util/compression.h>
 #include <iostream>
 #include <unordered_map>
 #include <utility>
 #include <vector>
-#include <arrow/util/compression.h>
 #include "shuffle/partition_writer.h"
 #include "shuffle/type.h"
 
@@ -18,7 +18,8 @@ class Splitter {
  public:
   ~Splitter();
 
-  static arrow::Result<std::shared_ptr<Splitter>> Make(const std::shared_ptr<arrow::Schema>& schema);
+  static arrow::Result<std::shared_ptr<Splitter>> Make(
+      const std::shared_ptr<arrow::Schema>& schema);
 
   std::shared_ptr<arrow::Schema> schema() const;
 

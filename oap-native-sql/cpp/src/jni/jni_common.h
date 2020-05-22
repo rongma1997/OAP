@@ -234,7 +234,7 @@ arrow::Result<std::shared_ptr<arrow::Buffer>> DecompressBuffer(
   int64_t uncompressed_size = arrow::util::SafeLoadAs<int64_t>(data);
 
   std::shared_ptr<arrow::Buffer> uncompressed;
-  RETURN_NOT_OK(arrow::AllocateBuffer(uncompressed_size, &uncompressed));
+  ARROW_ASSIGN_OR_RAISE(uncompressed, arrow::AllocateBuffer(uncompressed_size))
 
   int64_t actual_decompressed;
   ARROW_ASSIGN_OR_RAISE(

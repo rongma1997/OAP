@@ -10,12 +10,11 @@
 namespace sparkcolumnarplugin {
 namespace shuffle {
 
-arrow::Result<std::shared_ptr<PartitionWriter>> PartitionWriter::Create(int32_t pid, int64_t capacity,
-                                      Type::typeId last_type,
-                                      const std::vector<Type::typeId>& column_type_id,
-                                      const std::shared_ptr<arrow::Schema>& schema,
-                                      const std::string& temp_file_path,
-                                      arrow::Compression::type compression_codec) {
+arrow::Result<std::shared_ptr<PartitionWriter>> PartitionWriter::Create(
+    int32_t pid, int64_t capacity, Type::typeId last_type,
+    const std::vector<Type::typeId>& column_type_id,
+    const std::shared_ptr<arrow::Schema>& schema, const std::string& temp_file_path,
+    arrow::Compression::type compression_codec) {
   auto buffers = TypeBufferMessages(Type::NUM_TYPES);
   auto binary_bulders = BinaryBuilders();
   auto large_binary_bulders = LargeBinaryBuilders();
@@ -42,11 +41,12 @@ arrow::Result<std::shared_ptr<PartitionWriter>> PartitionWriter::Create(int32_t 
         uint8_t* validity_addr;
         uint8_t* value_addr;
 
-        RETURN_NOT_OK(arrow::AllocateEmptyBitmap(capacity, &validity_buffer));
+        ARROW_ASSIGN_OR_RAISE(validity_buffer, arrow::AllocateEmptyBitmap(capacity))
         if (type_id == Type::SHUFFLE_BIT) {
-          RETURN_NOT_OK(arrow::AllocateEmptyBitmap(capacity, &value_buffer));
+          ARROW_ASSIGN_OR_RAISE(value_buffer, arrow::AllocateEmptyBitmap(capacity))
         } else {
-          RETURN_NOT_OK(arrow::AllocateBuffer(capacity * (1 << type_id), &value_buffer));
+          ARROW_ASSIGN_OR_RAISE(value_buffer,
+                                arrow::AllocateBuffer(capacity * (1 << type_id)))
         }
         validity_addr = validity_buffer->mutable_data();
         value_addr = value_buffer->mutable_data();
@@ -59,13 +59,13 @@ arrow::Result<std::shared_ptr<PartitionWriter>> PartitionWriter::Create(int32_t 
     }
   }
 
-  ARROW_ASSIGN_OR_RAISE(auto file, arrow::io::FileOutputStream::Open(temp_file_path, true));
+  ARROW_ASSIGN_OR_RAISE(auto file,
+                        arrow::io::FileOutputStream::Open(temp_file_path, true));
 
-  return std::make_shared<PartitionWriter>(pid, capacity, last_type, column_type_id,
-                                           schema, temp_file_path, std::move(file),
-                                           std::move(buffers), std::move(binary_bulders),
-                                           std::move(large_binary_bulders),
-                                           compression_codec);
+  return std::make_shared<PartitionWriter>(
+      pid, capacity, last_type, column_type_id, schema, temp_file_path, std::move(file),
+      std::move(buffers), std::move(binary_bulders), std::move(large_binary_bulders),
+      compression_codec);
 }
 
 arrow::Status PartitionWriter::Stop() {
@@ -93,7 +93,7 @@ arrow::Status PartitionWriter::WriteArrowRecordBatch() {
       RETURN_NOT_OK(builder->Finish(&arrays[i]));
       binary_builders_.push_back(std::move(builder));
       binary_builders_.pop_front();
-    } else if (type_id == Type::SHUFFLE_LARGE_BINARY){
+    } else if (type_id == Type::SHUFFLE_LARGE_BINARY) {
       auto& builder = large_binary_builders_.front();
       RETURN_NOT_OK(builder->Finish(&arrays[i]));
       large_binary_builders_.push_back(std::move(builder));
@@ -101,9 +101,9 @@ arrow::Status PartitionWriter::WriteArrowRecordBatch() {
     } else {
       auto& buf_msg_ptr = buffers_[type_id].front();
       auto arr = arrow::ArrayData::Make(
-        schema_->field(i)->type(), write_offset_[last_type_],
-        std::vector<std::shared_ptr<arrow::Buffer>>{buf_msg_ptr->validity_buffer,
-                                                    buf_msg_ptr->value_buffer});
+          schema_->field(i)->type(), write_offset_[last_type_],
+          std::vector<std::shared_ptr<arrow::Buffer>>{buf_msg_ptr->validity_buffer,
+                                                      buf_msg_ptr->value_buffer});
       arrays[i] = arrow::MakeArray(arr);
       buffers_[type_id].push_back(std::move(buf_msg_ptr));
       buffers_[type_id].pop_front();
