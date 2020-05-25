@@ -96,11 +96,13 @@ private class ArrowColumnarBatchSerializerInstance extends SerializerInstance wi
             case ioe: IOException =>
               this.close()
               logError("Failed to load next RecordBatch", ioe)
+              throw ioe
           }
           if (batchLoaded) {
             assert(
               root.getRowCount <= columnBatchSize,
               "the number of loaded rows exceed the maximum columnar batch size")
+            logDebug(s"Read ColumnarBatch of ${root.getRowCount} rows")
 
             // jni call to decompress buffers
             if (compressionEnabled) {
@@ -161,10 +163,9 @@ private class ArrowColumnarBatchSerializerInstance extends SerializerInstance wi
         var bufIdx = 0
 
         root.getFieldVectors.asScala.foreach { vector =>
-//          if (vector.getNullCount == 0 || vector.getNullCount == vector.getValueCount) {
           val validityBuf = vector.getValidityBuffer
           if (validityBuf
-                .capacity() < 8 || java.lang.Long.bitCount(validityBuf.getLong(0)) == 64 ||
+                .capacity() <= 8 || java.lang.Long.bitCount(validityBuf.getLong(0)) == 64 ||
               java.lang.Long.bitCount(validityBuf.getLong(0)) == 0) {
             bufBS.add(bufIdx)
           }
