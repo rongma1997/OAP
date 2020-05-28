@@ -67,7 +67,9 @@ class ColumnarShuffleExchangeExec(
     SQLShuffleReadMetricsReporter.createShuffleReadMetrics(sparkContext)
   override lazy val metrics: Map[String, SQLMetric] = Map(
     "dataSize" -> SQLMetrics
-      .createSizeMetric(sparkContext, "data size")) ++ readMetrics ++ writeMetrics
+      .createSizeMetric(sparkContext, "data size"),
+    "avgReadBatchNumRows" -> SQLMetrics
+      .createAverageMetric(sparkContext, "avg read batch num rows")) ++ readMetrics ++ writeMetrics
 
   override def nodeName: String = "ColumnarExchange"
 
@@ -75,7 +77,8 @@ class ColumnarShuffleExchangeExec(
 
   @transient lazy val inputColumnarRDD: RDD[ColumnarBatch] = child.executeColumnar()
 
-  private val serializer: Serializer = new ArrowColumnarBatchSerializer
+  private val serializer: Serializer = new ArrowColumnarBatchSerializer(
+    longMetric("avgReadBatchNumRows"))
 
   @transient
   lazy val columnarShuffleDependency: ShuffleDependency[Int, ColumnarBatch, ColumnarBatch] = {
