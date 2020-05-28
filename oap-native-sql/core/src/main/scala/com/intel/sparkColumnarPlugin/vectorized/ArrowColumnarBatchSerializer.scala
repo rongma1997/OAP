@@ -32,6 +32,7 @@ import org.apache.spark.serializer.{
   Serializer,
   SerializerInstance
 }
+import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.util.ArrowUtils
 import org.apache.spark.sql.vectorized.{ColumnVector, ColumnarBatch}
@@ -41,14 +42,18 @@ import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
 import scala.reflect.ClassTag
 
-class ArrowColumnarBatchSerializer extends Serializer with Serializable {
+class ArrowColumnarBatchSerializer(readBatchNumRows: SQLMetric = null)
+    extends Serializer
+    with Serializable {
 
   /** Creates a new [[SerializerInstance]]. */
   override def newInstance(): SerializerInstance =
-    new ArrowColumnarBatchSerializerInstance
+    new ArrowColumnarBatchSerializerInstance(readBatchNumRows)
 }
 
-private class ArrowColumnarBatchSerializerInstance extends SerializerInstance with Logging {
+private class ArrowColumnarBatchSerializerInstance(readBatchNumRows: SQLMetric)
+    extends SerializerInstance
+    with Logging {
 
   override def deserializeStream(in: InputStream): DeserializationStream = {
     new DeserializationStream {
@@ -69,6 +74,9 @@ private class ArrowColumnarBatchSerializerInstance extends SerializerInstance wi
       private var jniWrapper: ShuffleDecompressionJniWrapper = _
       private var schemaHolderId: Long = 0
       private var vectorLoader: VectorLoader = _
+
+      private var numBatchesTotal: Long = _
+      private var numRowsTotal: Long = _
 
       override def asIterator: Iterator[Any] = {
         // This method is never called by shuffle code.
@@ -99,10 +107,11 @@ private class ArrowColumnarBatchSerializerInstance extends SerializerInstance wi
               throw ioe
           }
           if (batchLoaded) {
-            assert(
-              root.getRowCount <= columnBatchSize,
-              "the number of loaded rows exceed the maximum columnar batch size")
-            logDebug(s"Read ColumnarBatch of ${root.getRowCount} rows")
+            val numRows = root.getRowCount
+            logDebug(s"Read ColumnarBatch of ${numRows} rows")
+
+            numBatchesTotal += 1
+            numRowsTotal += numRows
 
             // jni call to decompress buffers
             if (compressionEnabled) {
@@ -116,10 +125,10 @@ private class ArrowColumnarBatchSerializerInstance extends SerializerInstance wi
             }.asJava
 
             vectors = ArrowWritableColumnVector
-              .loadColumns(root.getRowCount, newFieldVectors)
+              .loadColumns(numRows, newFieldVectors)
               .toArray[ColumnVector]
 
-            cb = new ColumnarBatch(vectors, root.getRowCount)
+            cb = new ColumnarBatch(vectors, numRows)
             cb.asInstanceOf[T]
           } else {
             this.close()
@@ -144,6 +153,7 @@ private class ArrowColumnarBatchSerializerInstance extends SerializerInstance wi
       }
 
       override def close(): Unit = {
+        readBatchNumRows.set(numRowsTotal.toDouble / numBatchesTotal)
         if (cb != null) cb.close()
         if (reader != null) reader.close(true)
         if (jniWrapper != null) jniWrapper.close(schemaHolderId)
