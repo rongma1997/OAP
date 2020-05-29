@@ -53,6 +53,7 @@ class ColumnarShuffleWriterSuite extends SharedSparkSession {
       .setAppName("test ColumnarShuffleWriter")
       .set("spark.file.transferTo", "true")
       .set("spark.shuffle.manager", "org.apache.spark.shuffle.sort.ColumnarShuffleManager")
+      .set("spark.sql.execution.arrow.maxRecordsPerBatch", "4096")
 
   private var taskMetrics: TaskMetrics = _
   private var tempDir: File = _
@@ -119,6 +120,41 @@ class ColumnarShuffleWriterSuite extends SharedSparkSession {
       taskContext.taskMetrics().shuffleWriteMetrics)
     writer.write(Iterator.empty)
     writer.stop( /* success = */ true)
+
+    assert(writer.getPartitionLengths.sum === 0)
+    assert(outputFile.exists())
+    assert(outputFile.length() === 0)
+    val shuffleWriteMetrics = taskContext.taskMetrics().shuffleWriteMetrics
+    assert(shuffleWriteMetrics.bytesWritten === 0)
+    assert(shuffleWriteMetrics.recordsWritten === 0)
+    assert(taskMetrics.diskBytesSpilled === 0)
+    assert(taskMetrics.memoryBytesSpilled === 0)
+  }
+
+  test("write empty column batch") {
+    val vectorPid = new IntVector("pid", allocator)
+    val vector1 = new IntVector("v1", allocator)
+    val vector2 = new IntVector("v2", allocator)
+
+    ColumnarShuffleWriterSuite.setIntVector(vectorPid)
+    ColumnarShuffleWriterSuite.setIntVector(vector1)
+    ColumnarShuffleWriterSuite.setIntVector(vector2)
+    val cb = ColumnarShuffleWriterSuite.makeColumnarBatch(
+      vectorPid.getValueCount,
+      List(vectorPid, vector1, vector2))
+
+    def records: Iterator[(Int, ColumnarBatch)] = Iterator((0, cb), (0, cb))
+
+    val writer = new ColumnarShuffleWriter[Int, ColumnarBatch](
+      blockResolver,
+      shuffleHandle,
+      0L, // MapId
+      taskContext.taskMetrics().shuffleWriteMetrics)
+
+    writer.write(records)
+    writer.stop(success = true)
+    cb.close()
+
     assert(writer.getPartitionLengths.sum === 0)
     assert(outputFile.exists())
     assert(outputFile.length() === 0)
@@ -130,9 +166,9 @@ class ColumnarShuffleWriterSuite extends SharedSparkSession {
   }
 
   test("write with some empty partitions") {
-    var vectorPid = new IntVector("pid", allocator)
-    var vector1 = new IntVector("v1", allocator)
-    var vector2 = new IntVector("v2", allocator)
+    val vectorPid = new IntVector("pid", allocator)
+    val vector1 = new IntVector("v1", allocator)
+    val vector2 = new IntVector("v2", allocator)
     ColumnarShuffleWriterSuite.setIntVector(vectorPid, 1, 2, 1, 10)
     ColumnarShuffleWriterSuite.setIntVector(vector1, null, null, null, null)
     ColumnarShuffleWriterSuite.setIntVector(vector2, 100, 100, null, null)

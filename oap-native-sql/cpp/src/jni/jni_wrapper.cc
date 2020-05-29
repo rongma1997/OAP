@@ -1081,7 +1081,7 @@ Java_com_intel_sparkColumnarPlugin_datasource_parquet_ParquetWriterJniWrapper_na
 
 JNIEXPORT jlong JNICALL
 Java_com_intel_sparkColumnarPlugin_vectorized_ShuffleSplitterJniWrapper_make(
-    JNIEnv* env, jobject, jbyteArray schema_arr) {
+    JNIEnv* env, jobject, jbyteArray schema_arr, jlong buffer_size) {
   std::shared_ptr<arrow::Schema> schema;
   arrow::Status status;
 
@@ -1097,6 +1097,8 @@ Java_com_intel_sparkColumnarPlugin_vectorized_ShuffleSplitterJniWrapper_make(
     env->ThrowNew(io_exception_class,
                   std::string("Failed create native shuffle splitter").c_str());
   }
+
+  (*result)->set_buffer_size(buffer_size);
 
   return shuffle_splitter_holder_.Insert(std::shared_ptr<Splitter>(*result));
 }
