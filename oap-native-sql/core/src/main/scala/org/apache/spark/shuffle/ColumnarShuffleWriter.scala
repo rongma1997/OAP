@@ -44,6 +44,8 @@ class ColumnarShuffleWriter[K, V](
   private val transeferToEnabled = conf.getBoolean("spark.file.transferTo", true)
   private val compressionEnabled = conf.getBoolean("spark.shuffle.compress", true)
   private val compressionCodec = conf.get("spark.io.compression.codec", "lz4")
+  private val nativeBufferSize =
+    conf.getLong("spark.sql.execution.arrow.maxRecordsPerBatch", 4096)
 
   private val jniWrapper = new ShuffleSplitterJniWrapper()
 
@@ -62,7 +64,7 @@ class ColumnarShuffleWriter[K, V](
 
     if (nativeSplitter == 0) {
       val schema: Schema = Schema.deserialize(ByteBuffer.wrap(dep.serializedSchema))
-      nativeSplitter = jniWrapper.make(SchemaUtils.get.serialize(schema))
+      nativeSplitter = jniWrapper.make(SchemaUtils.get.serialize(schema), nativeBufferSize)
       if (compressionEnabled) {
         jniWrapper.setCompressionCodec(nativeSplitter, compressionCodec)
       }

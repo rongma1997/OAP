@@ -12,11 +12,22 @@ public class ShuffleSplitterJniWrapper {
    * Construct native splitter for shuffled RecordBatch over
    *
    * @param schemaBuf serialized arrow schema
+   * @param bufferSize size of native buffers hold by each partition writer
    * @return native splitter instance id if created successfully.
    * @throws RuntimeException
    */
-  public native long make(byte[] schemaBuf) throws RuntimeException;
+  public native long make(byte[] schemaBuf, long bufferSize) throws RuntimeException;
 
+  /**
+   * Split one record batch represented by bufAddrs and bufSizes into several batches. The batch is split according to
+   * the first column as partition id. During splitting, the data in native buffers will be write to disk when
+   * the buffers are full.
+   * @param splitterId
+   * @param numRows Rows per batch
+   * @param bufAddrs Addresses of buffers
+   * @param bufSizes Sizes of buffers
+   * @throws RuntimeException
+   */
   public native void split(long splitterId, int numRows, long[] bufAddrs, long[] bufSizes)
       throws RuntimeException;
 
@@ -39,11 +50,10 @@ public class ShuffleSplitterJniWrapper {
   public native void setPartitionBufferSize(long splitterId, long bufferSize);
 
   /**
-   * Set compression codec for splitter's output. For now we only support those types supported both by spark and arrow:
-   * Default will be uncompressed.
+   * Set compression codec for splitter's output. Default will be uncompressed.
    *
    * @param splitterId
-   * @param codec "lz4", "snappy", "zstd", "uncompressed"
+   * @param codec "lz4", "zstd", "uncompressed"
    */
   public native void setCompressionCodec(long splitterId, String codec);
 
@@ -57,6 +67,11 @@ public class ShuffleSplitterJniWrapper {
    */
   public native PartitionFileInfo[] getPartitionFileInfo(long splitterId);
 
+  /**
+   * Get the total bytes written to disk.
+   * @param splitterId
+   * @return
+   */
   public native long getTotalBytesWritten(long splitterId);
 
   /**
