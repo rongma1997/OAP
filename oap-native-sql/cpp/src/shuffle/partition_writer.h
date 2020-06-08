@@ -15,9 +15,8 @@ namespace shuffle {
 namespace detail {
 
 template <typename T>
-void inline Write(const SrcBuffers& src, int64_t src_offset, const BufferMessages& dst,
+arrow::Status inline Write(const SrcBuffers& src, int64_t src_offset, const BufferMessages& dst,
                   int64_t dst_offset) {
-  // for the last typeId, check if write ends, then reset write_offset and spill
   for (size_t i = 0; i < src.size(); ++i) {
     dst[i]->validity_addr[dst_offset / 8] |=
         (((src[i].validity_addr)[src_offset / 8] >> (src_offset % 8)) & 1)
@@ -25,12 +24,12 @@ void inline Write(const SrcBuffers& src, int64_t src_offset, const BufferMessage
     reinterpret_cast<T*>(dst[i]->value_addr)[dst_offset] =
         reinterpret_cast<T*>(src[i].value_addr)[src_offset];
   }
+  return arrow::Status::OK();
 }
 
 template <>
-void inline Write<bool>(const SrcBuffers& src, int64_t src_offset,
+arrow::Status inline Write<bool>(const SrcBuffers& src, int64_t src_offset,
                         const BufferMessages& dst, int64_t dst_offset) {
-  // for the last typeId, check if write ends, then reset write_offset and spill
   for (size_t i = 0; i < src.size(); ++i) {
     dst[i]->validity_addr[dst_offset / 8] |=
         (((src[i].validity_addr)[src_offset / 8] >> (src_offset % 8)) & 1)
@@ -39,6 +38,42 @@ void inline Write<bool>(const SrcBuffers& src, int64_t src_offset,
         (((src[i].value_addr)[src_offset / 8] >> (src_offset % 8)) & 1)
         << (dst_offset % 8);
   }
+  return arrow::Status::OK();
+}
+
+template <typename T, typename ArrayType = typename arrow::TypeTraits<T>::ArrayType,
+    typename BuilderType = typename arrow::TypeTraits<T>::BuilderType>
+arrow::enable_if_binary_like<T, arrow::Status> inline WriteBinary(
+    const std::vector<std::shared_ptr<ArrayType>>& src,
+    int64_t offset, const std::deque<std::unique_ptr<BuilderType>>& builders) {
+  using offset_type = typename T::offset_type;
+
+  for (size_t i = 0; i < src.size(); ++i) {
+    offset_type length;
+    auto value = src[i]->GetValue(offset, &length);
+    RETURN_NOT_OK(builders[i]->Append(value, length));
+  }
+  return arrow::Status::OK();
+}
+
+template <typename T, typename ArrayType = typename arrow::TypeTraits<T>::ArrayType,
+    typename BuilderType = typename arrow::TypeTraits<T>::BuilderType>
+arrow::enable_if_binary_like<T, arrow::Status> inline WriteNullableBinary(
+    const std::vector<std::shared_ptr<ArrayType>>& src,
+    int64_t offset, const std::deque<std::unique_ptr<BuilderType>>& builders) {
+  using offset_type = typename T::offset_type;
+
+  for (size_t i = 0; i < src.size(); ++i) {
+    // check not null
+    if (src[i]->IsValid(offset)) {
+      offset_type length;
+      auto value = src[i]->GetValue(offset, &length);
+      RETURN_NOT_OK(builders[i]->Append(value, length));
+    } else {
+      RETURN_NOT_OK(builders[i]->AppendNull());
+    }
+  }
+  return arrow::Status::OK();
 }
 
 }  // namespace detail
@@ -111,63 +146,93 @@ class PartitionWriter {
   /// Do memory copy, return true if mem-copy performed
   /// if writer's memory buffer is full, then no mem-copy will be performed, will spill to
   /// disk and return false
+  /// \tparam T arrow::DataType
+  /// \param type_id shuffle type id mapped from T
+  /// \param src source buffers
+  /// \param offset index of the element in source buffers
+  /// \return true if write performed, else false
   template <typename T>
   arrow::Result<bool> inline Write(Type::typeId type_id, const SrcBuffers& src,
                                    int64_t offset) {
     // for the type_id, check if write ends. For the last type reset write_offset and
     // spill
-    auto result = CheckTypeWriteEnds(type_id);
-    RETURN_NOT_OK(result.status());
-    if (*result) {
+    ARROW_ASSIGN_OR_RAISE(auto write_ends, CheckTypeWriteEnds(type_id))
+    if (write_ends) {
       return false;
     }
 
-    detail::Write<T>(src, offset, buffers_[type_id], write_offset_[type_id]);
+    RETURN_NOT_OK(detail::Write<T>(src, offset, buffers_[type_id], write_offset_[type_id]));
 
     ++write_offset_[type_id];
     return true;
   }
 
-  /// only make large binary type since the type of recordbatch.num_rows is int64_t
+  /// Do memory copy for binary type
   /// \param src source binary array
   /// \param offset index of the element in source binary array
-  /// \return
-  arrow::Result<bool> inline WriteBinary(const SrcBinaryArrays& src, int64_t offset) {
-    auto result = CheckTypeWriteEnds(Type::SHUFFLE_BINARY);
-    RETURN_NOT_OK(result.status());
-    if (*result) {
+  /// \return true if write performed, else false
+  arrow::Result<bool> inline WriteBinary(
+      const std::vector<std::shared_ptr<arrow::BinaryArray>>& src,
+      int64_t offset) {
+    ARROW_ASSIGN_OR_RAISE(auto write_ends, CheckTypeWriteEnds(Type::SHUFFLE_BINARY))
+    if (write_ends) {
       return false;
     }
 
-    for (size_t i = 0; i < src.size(); ++i) {
-      // check not null
-      if (src[i]->IsValid(offset)) {
-        RETURN_NOT_OK(binary_builders_[i]->Append(src[i]->GetString(offset)));
-      } else {
-        RETURN_NOT_OK(binary_builders_[i]->AppendNull());
-      }
-    }
+    RETURN_NOT_OK(detail::WriteBinary<arrow::BinaryType>(src, offset, binary_builders_));
 
     ++write_offset_[Type::SHUFFLE_BINARY];
     return true;
   }
 
-  arrow::Result<bool> inline WriteLargeBinary(const SrcLargeBinaryArrays& src,
-                                              int64_t offset) {
-    auto result = CheckTypeWriteEnds(Type::SHUFFLE_LARGE_BINARY);
-    RETURN_NOT_OK(result.status());
-    if (*result) {
+  /// Do memory copy for large binary type
+  /// \param src source binary array
+  /// \param offset index of the element in source binary array
+  /// \return
+  arrow::Result<bool> inline WriteLargeBinary(
+      const std::vector<std::shared_ptr<arrow::LargeBinaryArray>>& src,
+      int64_t offset) {
+    ARROW_ASSIGN_OR_RAISE(auto write_ends, CheckTypeWriteEnds(Type::SHUFFLE_LARGE_BINARY))
+    if (write_ends) {
       return false;
     }
 
-    for (size_t i = 0; i < src.size(); ++i) {
-      // check not null
-      if (src[i]->IsValid(offset)) {
-        RETURN_NOT_OK(large_binary_builders_[i]->Append(src[i]->GetString(offset)));
-      } else {
-        RETURN_NOT_OK(large_binary_builders_[i]->AppendNull());
-      }
+    RETURN_NOT_OK(detail::WriteBinary<arrow::LargeBinaryType>(src, offset, large_binary_builders_));
+
+    ++write_offset_[Type::SHUFFLE_LARGE_BINARY];
+    return true;
+  }
+  /// Do memory copy for binary type
+  /// \param src source binary array
+  /// \param offset index of the element in source binary array
+  /// \return
+  arrow::Result<bool> inline WriteNullableBinary(
+      const std::vector<std::shared_ptr<arrow::BinaryArray>>& src,
+      int64_t offset) {
+    ARROW_ASSIGN_OR_RAISE(auto write_ends, CheckTypeWriteEnds(Type::SHUFFLE_BINARY))
+    if (write_ends) {
+      return false;
     }
+
+    RETURN_NOT_OK(detail::WriteNullableBinary<arrow::BinaryType>(src, offset, binary_builders_));
+
+    ++write_offset_[Type::SHUFFLE_BINARY];
+    return true;
+  }
+
+  /// Do memory copy for large binary type
+  /// \param src source binary array
+  /// \param offset index of the element in source binary array
+  /// \return
+  arrow::Result<bool> inline WriteNullableLargeBinary(
+      const std::vector<std::shared_ptr<arrow::LargeBinaryArray>>& src,
+      int64_t offset) {
+    ARROW_ASSIGN_OR_RAISE(auto write_ends, CheckTypeWriteEnds(Type::SHUFFLE_LARGE_BINARY))
+    if (write_ends) {
+      return false;
+    }
+
+    RETURN_NOT_OK(detail::WriteNullableBinary<arrow::LargeBinaryType>(src, offset, large_binary_builders_));
 
     ++write_offset_[Type::SHUFFLE_LARGE_BINARY];
     return true;
@@ -180,18 +245,17 @@ class PartitionWriter {
   const std::vector<Type::typeId>& column_type_id_;
   const std::shared_ptr<arrow::Schema>& schema_;
   const std::string file_path_;
-  const std::shared_ptr<arrow::io::FileOutputStream> file_;
+
+  std::shared_ptr<arrow::io::FileOutputStream> file_;
   TypeBufferMessages buffers_;
   BinaryBuilders binary_builders_;
   LargeBinaryBuilders large_binary_builders_;
+  arrow::Compression::type compression_codec_;
 
   std::vector<int64_t> write_offset_;
   int64_t file_footer_;
   bool file_writer_opened_;
-
   std::shared_ptr<arrow::ipc::RecordBatchWriter> file_writer_;
-
-  arrow::Compression::type compression_codec_;
 };
 
 }  // namespace shuffle

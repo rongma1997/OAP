@@ -75,16 +75,14 @@ case class ColumnarPreOverrides(conf: SparkConf) extends Rule[SparkPlan] {
         plan.withNewChildren(children)
       }
     case plan: ShuffleExchangeExec =>
-      val columnarShuffleEnabled = conf
-        .get("spark.shuffle.manager", "sort")
-        .equals("org.apache.spark.shuffle.sort.ColumnarShuffleManager")
-      if (columnarShuffleEnabled) {
+      if (columnarConf.enableColumnarShuffle) {
         val child = replaceWithColumnarPlan(plan.child)
         logDebug(s"Columnar Processing for ${plan.getClass} is currently supported.")
-        new ColumnarShuffleExchangeExec(
-          plan.outputPartitioning,
-          child,
-          plan.canChangeNumPartitions)
+        CoalesceBatchesExec(
+          new ColumnarShuffleExchangeExec(
+            plan.outputPartitioning,
+            child,
+            plan.canChangeNumPartitions))
       } else {
         val children = plan.children.map(replaceWithColumnarPlan)
         logDebug(s"Columnar Processing for ${plan.getClass} is not currently supported.")
