@@ -86,7 +86,7 @@ static const typeId all[] = {
 
 }  // namespace Type
 
-using BufferMessages = std::deque<std::shared_ptr<BufferMessage>>;
+using BufferMessages = std::deque<std::unique_ptr<BufferMessage>>;
 using TypeBufferMessages = std::vector<BufferMessages>;
 using BinaryBuilders = std::deque<std::unique_ptr<arrow::BinaryBuilder>>;
 using LargeBinaryBuilders = std::deque<std::unique_ptr<arrow::LargeBinaryBuilder>>;

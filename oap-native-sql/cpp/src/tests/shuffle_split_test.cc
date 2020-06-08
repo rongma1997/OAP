@@ -192,7 +192,7 @@ TEST_F(ShuffleTest, TestWriterMakeArrowRecordBatch) {
   for (int i = 0; i < num_rb; ++i) {
     std::shared_ptr<arrow::RecordBatch> rb;
     ASSERT_NOT_OK(file_reader->ReadNext(&rb));
-    ASSERT_NOT_OK(Equals(*rb, *output_batch));
+    ASSERT_NOT_OK(Equals(*output_batch, *rb));
   }
   ASSERT_NOT_OK(file_in->Close())
 }

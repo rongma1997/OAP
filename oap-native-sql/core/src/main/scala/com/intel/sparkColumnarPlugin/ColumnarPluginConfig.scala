@@ -22,6 +22,9 @@ import org.apache.spark.SparkConf
 class ColumnarPluginConfig(conf: SparkConf) {
   val enableColumnarSort: Boolean =
     conf.getBoolean("spark.sql.columnar.sort", defaultValue = false)
+  val enableColumnarShuffle: Boolean = conf
+    .get("spark.shuffle.manager", "sort")
+    .equals("org.apache.spark.shuffle.sort.ColumnarShuffleManager")
 }
 
 object ColumnarPluginConfig {

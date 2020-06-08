@@ -71,14 +71,14 @@ class ColumnarShuffleWriter[K, V](
     }
 
     while (records.hasNext) {
-      val columnarBatch = records.next()._2.asInstanceOf[ColumnarBatch]
-      if (columnarBatch.numRows == 0) {
-        logInfo("Skip ColumnarBatch of 0 rows")
+      val cb = records.next()._2.asInstanceOf[ColumnarBatch]
+      if (cb.numRows == 0 || cb.numCols == 0) {
+        logInfo(s"Skip ColumnarBatch of ${cb.numRows} rows, ${cb.numCols} cols")
       } else {
         val bufAddrs = new ListBuffer[Long]()
         val bufSizes = new ListBuffer[Long]()
-        (0 until columnarBatch.numCols).foreach { idx =>
-          val column = columnarBatch.column(idx).asInstanceOf[ArrowWritableColumnVector]
+        (0 until cb.numCols).foreach { idx =>
+          val column = cb.column(idx).asInstanceOf[ArrowWritableColumnVector]
           column.getValueVector
             .getBuffers(false)
             .foreach { buffer =>
@@ -89,11 +89,7 @@ class ColumnarShuffleWriter[K, V](
         dep.dataSize.add(bufSizes.sum)
 
         val startTime = System.nanoTime()
-        jniWrapper.split(
-          nativeSplitter,
-          columnarBatch.numRows,
-          bufAddrs.toArray,
-          bufSizes.toArray)
+        jniWrapper.split(nativeSplitter, cb.numRows, bufAddrs.toArray, bufSizes.toArray)
         writeMetrics.incWriteTime(System.nanoTime() - startTime)
         writeMetrics.incRecordsWritten(1)
       }

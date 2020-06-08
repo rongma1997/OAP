@@ -108,8 +108,12 @@ class Splitter::Impl {
     auto num_rows = record_batch.num_rows();
     auto num_cols = record_batch.num_columns();
     auto src_addr = std::vector<SrcBuffers>(Type::NUM_TYPES);
+
     auto src_binary_arr = SrcBinaryArrays();
+    auto src_nullable_binary_arr = SrcBinaryArrays();
+
     auto src_large_binary_arr = SrcLargeBinaryArrays();
+    auto src_nullable_large_binary_arr = SrcLargeBinaryArrays();
 
     // TODO: make dummy_buf private static if possible
     arrow::TypedBufferBuilder<bool> null_bitmap_builder_;
@@ -123,19 +127,29 @@ class Splitter::Impl {
     // id
     for (auto i = 0; i < num_cols - 1; ++i) {
       const auto& buffers = record_batch.column_data(i + 1)->buffers;
-      if (column_type_id_[i] == Type::SHUFFLE_BINARY) {
-        src_binary_arr.push_back(
-            std::static_pointer_cast<arrow::BinaryArray>(record_batch.column(i + 1)));
-      } else if (column_type_id_[i] == Type::SHUFFLE_LARGE_BINARY) {
-        src_large_binary_arr.push_back(std::static_pointer_cast<arrow::LargeBinaryArray>(
-            record_batch.column(i + 1)));
-      } else if (column_type_id_[i] != Type::SHUFFLE_NULL) {
-        if (record_batch.column_data(i + 1)->GetNullCount() == 0) {
+      if (record_batch.column_data(i + 1)->GetNullCount() == 0) {
+        if (column_type_id_[i] == Type::SHUFFLE_BINARY) {
+          src_binary_arr.push_back(
+              std::static_pointer_cast<arrow::BinaryArray>(record_batch.column(i + 1)));
+        } else if (column_type_id_[i] == Type::SHUFFLE_LARGE_BINARY) {
+          src_large_binary_arr.push_back(
+              std::static_pointer_cast<arrow::LargeBinaryArray>(
+                  record_batch.column(i + 1)));
+        } else if (column_type_id_[i] != Type::SHUFFLE_NULL) {
           // null bitmap may be nullptr
           src_addr[column_type_id_[i]].push_back(
               {.validity_addr = dummy_buf_p,
                .value_addr = const_cast<uint8_t*>(buffers[1]->data())});
-        } else {
+        }
+      } else {
+        if (column_type_id_[i] == Type::SHUFFLE_BINARY) {
+          src_nullable_binary_arr.push_back(
+              std::static_pointer_cast<arrow::BinaryArray>(record_batch.column(i + 1)));
+        } else if (column_type_id_[i] == Type::SHUFFLE_LARGE_BINARY) {
+          src_nullable_large_binary_arr.push_back(
+              std::static_pointer_cast<arrow::LargeBinaryArray>(
+                  record_batch.column(i + 1)));
+        } else if (column_type_id_[i] != Type::SHUFFLE_NULL) {
           src_addr[column_type_id_[i]].push_back(
               {.validity_addr = const_cast<uint8_t*>(buffers[0]->data()),
                .value_addr = const_cast<uint8_t*>(buffers[1]->data())});
@@ -176,15 +190,26 @@ class Splitter::Impl {
 
     auto read_offset = 0;
 
-#define WRITE_FIXEDWIDTH(TYPE_ID, T)                                                 \
-  if (!src_addr[TYPE_ID].empty()) {                                                  \
-    for (i = read_offset; i < num_rows; ++i) {                                       \
-      auto result = pid_writer_[new_id[i]]->Write<T>(TYPE_ID, src_addr[TYPE_ID], i); \
-      RETURN_NOT_OK(result.status());                                                \
-      if (!(*result)) {                                                              \
-        break;                                                                       \
-      }                                                                              \
-    }                                                                                \
+#define WRITE_FIXEDWIDTH(TYPE_ID, T)                                                    \
+  if (!src_addr[TYPE_ID].empty()) {                                                     \
+    for (i = read_offset; i < num_rows; ++i) {                                          \
+      ARROW_ASSIGN_OR_RAISE(                                                            \
+          auto result, pid_writer_[new_id[i]]->Write<T>(TYPE_ID, src_addr[TYPE_ID], i)) \
+      if (!result) {                                                                    \
+        break;                                                                          \
+      }                                                                                 \
+    }                                                                                   \
+  }
+
+#define WRITE_BINARY(func, T, src_arr)                                \
+  if (!src_arr.empty()) {                                                      \
+    for (i = read_offset; i < num_rows; ++i) {                                 \
+      ARROW_ASSIGN_OR_RAISE(auto result,                                       \
+                            pid_writer_[new_id[i]]->func(src_arr, i)) \
+      if (!result) {                                                           \
+        break;                                                                 \
+      }                                                                        \
+    }                                                                          \
   }
 
     while (read_offset < num_rows) {
@@ -194,24 +219,13 @@ class Splitter::Impl {
       WRITE_FIXEDWIDTH(Type::SHUFFLE_4BYTE, uint32_t);
       WRITE_FIXEDWIDTH(Type::SHUFFLE_8BYTE, uint64_t);
       WRITE_FIXEDWIDTH(Type::SHUFFLE_BIT, bool);
-      if (!src_binary_arr.empty()) {
-        for (i = read_offset; i < num_rows; ++i) {
-          auto result = pid_writer_[new_id[i]]->WriteBinary(src_binary_arr, i);
-          RETURN_NOT_OK(result.status());
-          if (!(*result)) {
-            break;
-          }
-        }
-      }
-      if (!src_large_binary_arr.empty()) {
-        for (i = read_offset; i < num_rows; ++i) {
-          auto result = pid_writer_[new_id[i]]->WriteLargeBinary(src_large_binary_arr, i);
-          RETURN_NOT_OK(result.status());
-          if (!(*result)) {
-            break;
-          }
-        }
-      }
+      WRITE_BINARY(WriteBinary, arrow::BinaryType, src_binary_arr);
+      WRITE_BINARY(WriteLargeBinary, arrow::LargeBinaryType,
+                   src_large_binary_arr);
+      WRITE_BINARY(WriteNullableBinary, arrow::BinaryType,
+                   src_nullable_binary_arr);
+      WRITE_BINARY(WriteNullableLargeBinary,
+                   arrow::LargeBinaryType, src_nullable_large_binary_arr);
       read_offset = i;
     }
 #undef WRITE_FIXEDWIDTH

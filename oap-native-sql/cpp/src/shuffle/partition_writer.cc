@@ -32,8 +32,8 @@ arrow::Result<std::shared_ptr<PartitionWriter>> PartitionWriter::Create(
         large_binary_bulders.push_back(std::move(builder));
       } break;
       case Type::SHUFFLE_NULL: {
-        buffers[type_id].push_back(std::make_shared<BufferMessage>(
-            BufferMessage{.validity_buffer = nullptr, .value_buffer = nullptr}));
+        buffers[type_id].push_back(std::unique_ptr<BufferMessage>(
+            new BufferMessage{.validity_buffer = nullptr, .value_buffer = nullptr}));
       } break;
       default: {
         std::shared_ptr<arrow::Buffer> validity_buffer;
@@ -50,11 +50,11 @@ arrow::Result<std::shared_ptr<PartitionWriter>> PartitionWriter::Create(
         }
         validity_addr = validity_buffer->mutable_data();
         value_addr = value_buffer->mutable_data();
-        buffers[type_id].push_back(std::make_shared<BufferMessage>(
-            BufferMessage{.validity_buffer = std::move(validity_buffer),
-                          .value_buffer = std::move(value_buffer),
-                          .validity_addr = validity_addr,
-                          .value_addr = value_addr}));
+        buffers[type_id].push_back(std::unique_ptr<BufferMessage>(
+            new BufferMessage{.validity_buffer = std::move(validity_buffer),
+                              .value_buffer = std::move(value_buffer),
+                              .validity_addr = validity_addr,
+                              .value_addr = value_addr}));
       } break;
     }
   }
@@ -89,24 +89,24 @@ arrow::Status PartitionWriter::WriteArrowRecordBatch() {
   for (int i = 0; i < schema_->num_fields(); ++i) {
     auto type_id = column_type_id_[i];
     if (type_id == Type::SHUFFLE_BINARY) {
-      auto& builder = binary_builders_.front();
+      auto builder = std::move(binary_builders_.front());
+      binary_builders_.pop_front();
       RETURN_NOT_OK(builder->Finish(&arrays[i]));
       binary_builders_.push_back(std::move(builder));
-      binary_builders_.pop_front();
     } else if (type_id == Type::SHUFFLE_LARGE_BINARY) {
-      auto& builder = large_binary_builders_.front();
+      auto builder = std::move(large_binary_builders_.front());
+      large_binary_builders_.pop_front();
       RETURN_NOT_OK(builder->Finish(&arrays[i]));
       large_binary_builders_.push_back(std::move(builder));
-      large_binary_builders_.pop_front();
     } else {
-      auto& buf_msg_ptr = buffers_[type_id].front();
+      auto buf_msg_ptr = std::move(buffers_[type_id].front());
+      buffers_[type_id].pop_front();
       auto arr = arrow::ArrayData::Make(
           schema_->field(i)->type(), write_offset_[last_type_],
           std::vector<std::shared_ptr<arrow::Buffer>>{buf_msg_ptr->validity_buffer,
                                                       buf_msg_ptr->value_buffer});
       arrays[i] = arrow::MakeArray(arr);
       buffers_[type_id].push_back(std::move(buf_msg_ptr));
-      buffers_[type_id].pop_front();
     }
   }
   auto record_batch =
