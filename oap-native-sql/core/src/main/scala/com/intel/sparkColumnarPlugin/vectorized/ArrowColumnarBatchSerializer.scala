@@ -153,7 +153,9 @@ private class ArrowColumnarBatchSerializerInstance(readBatchNumRows: SQLMetric)
       }
 
       override def close(): Unit = {
-        readBatchNumRows.set(numRowsTotal.toDouble / numBatchesTotal)
+        if (numBatchesTotal > 0) {
+          readBatchNumRows.set(numRowsTotal.toDouble / numBatchesTotal)
+        }
         if (cb != null) cb.close()
         if (reader != null) reader.close(true)
         if (jniWrapper != null) jniWrapper.close(schemaHolderId)
