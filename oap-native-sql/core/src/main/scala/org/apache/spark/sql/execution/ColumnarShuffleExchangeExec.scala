@@ -175,7 +175,7 @@ object ColumnarShuffleExchangeExec extends Logging {
     // As for Columnar Shuffle, we create a new column to store the partition ids for each row in
     // one ColumnarBatch, and append it to the front. ColumnarShuffleWriter will extract partition ids
     // from ColumnarBatch other than read the "key" part. Thus in Columnar Shuffle we never use the "key" part.
-    val rddWithDummyPartitionIds: RDD[Product2[Int, ColumnarBatch]] = {
+    val rddWithDummyKey: RDD[Product2[Int, ColumnarBatch]] = {
       val isOrderSensitive = isRoundRobin && !SQLConf.get.sortBeforeRepartition
 
       rdd.mapPartitionsWithIndexInternal(
@@ -234,7 +234,7 @@ object ColumnarShuffleExchangeExec extends Logging {
 
     val dependency =
       new ColumnarShuffleDependency[Int, ColumnarBatch, ColumnarBatch](
-        rddWithDummyPartitionIds,
+        rddWithDummyKey,
         new PartitionIdPassthrough(newPartitioning.numPartitions),
         serializer,
         shuffleWriterProcessor = createShuffleWriteProcessor(writeMetrics),
@@ -276,13 +276,16 @@ case class ClosablePairedColumnarBatchIterator(iter: Iterator[(Int, ColumnarBatc
   private var cur: (Int, ColumnarBatch) = _
 
   TaskContext.get().addTaskCompletionListener[Unit] { _ =>
-    closeCurrentBatch()
+    closeAppendedVector()
   }
 
-  private def closeCurrentBatch(): Unit = {
+  private def closeAppendedVector(): Unit = {
     if (cur != null) {
-      logDebug("Shuffle ColumnarBatch closed")
-      cur match { case (_, cb: ColumnarBatch) => cb.close() }
+      logDebug("Appended partition id vector closed")
+      cur match {
+        case (_, cb: ColumnarBatch) =>
+          cb.column(0).asInstanceOf[ArrowWritableColumnVector].close()
+      }
       cur = null
     }
   }
@@ -292,7 +295,7 @@ case class ClosablePairedColumnarBatchIterator(iter: Iterator[(Int, ColumnarBatc
   }
 
   override def next(): (Int, ColumnarBatch) = {
-    closeCurrentBatch()
+    closeAppendedVector()
     if (iter.hasNext) {
       cur = iter.next()
       cur

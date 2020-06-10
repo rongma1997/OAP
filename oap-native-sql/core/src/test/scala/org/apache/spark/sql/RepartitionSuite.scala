@@ -4,6 +4,7 @@ import com.intel.oap.spark.sql.DataFrameReaderImplicits._
 import com.intel.oap.spark.sql.execution.datasources.v2.arrow.ArrowOptions
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.execution.columnar.InMemoryTableScanExec
+import org.apache.spark.sql.execution.exchange.ShuffleExchangeExec
 import org.apache.spark.sql.execution.{
   ColumnarShuffleExchangeExec,
   ColumnarToRowExec,
@@ -21,8 +22,10 @@ class RepartitionSuite extends QueryTest with SharedSparkSession {
       .set("spark.sql.sources.useV1SourceList", "avro")
       .set("spark.sql.join.preferSortMergeJoin", "false")
       .set("spark.sql.extensions", "com.intel.sparkColumnarPlugin.ColumnarPlugin")
+      .set("spark.sql.execution.arrow.maxRecordsPerBatch", "4096")
       .set("spark.shuffle.manager", "org.apache.spark.shuffle.sort.ColumnarShuffleManager")
       .set("spark.sql.codegen.wholeStage", "false")
+      .set("spark.shuffle.compress", "false")
 
   def checkCoulumnarExec(data: DataFrame) = {
     val found = data.queryExecution.executedPlan
@@ -91,11 +94,11 @@ class TPCHTableRepartitionSuite extends RepartitionSuite {
     .getResource("part-00000-d648dd34-c9d2-4fe9-87f2-770ef3551442-c000.snappy.parquet")
     .getFile
 
-  override lazy val input = spark.read.parquet(filePath)
-  //    spark.read
-  //      .option(ArrowOptions.KEY_ORIGINAL_FORMAT, "parquet")
-  //      .option(ArrowOptions.KEY_FILESYSTEM, "hdfs")
-  //      .arrow(filePath)
+  override lazy val input = spark.read
+    .option(ArrowOptions.KEY_ORIGINAL_FORMAT, "parquet")
+    .option(ArrowOptions.KEY_FILESYSTEM, "hdfs")
+    .arrow(filePath)
+
   test("test tpch round robin partitioning") {
     withRepartition(df => df.repartition(2))
   }
@@ -112,5 +115,25 @@ class TPCHTableRepartitionSuite extends RepartitionSuite {
     withTransformationAndRepartition(
       df => df.groupBy("n_regionkey").agg(Map("n_nationkey" -> "sum")),
       df => df.repartition(2))
+  }
+}
+
+class DisableColumnarShuffle extends SmallDataRepartitionSuite {
+  override def sparkConf: SparkConf = {
+    super.sparkConf
+      .set("spark.shuffle.manager", "sort")
+      .set("spark.sql.codegen.wholeStage", "true")
+  }
+
+  override def checkCoulumnarExec(data: DataFrame) = {
+    val found = data.queryExecution.executedPlan
+      .collect {
+        case c2r: ColumnarToRowExec => 1
+        case exc: ColumnarShuffleExchangeExec => 10
+        case exc: ShuffleExchangeExec => 100
+      }
+      .distinct
+      .sum
+    assert(found == 101)
   }
 }
