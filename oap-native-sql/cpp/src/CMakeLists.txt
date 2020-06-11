@@ -18,6 +18,11 @@ option(TESTS "Build the tests" OFF)
 option(BENCHMARKS "Build the benchmarks" OFF)
 option(DEBUG "Enable Debug Info" OFF)
 
+# same as the version required in arrow/ci/conda_env_cpp.yml
+set(BOOST_MIN_VERSION "1.42.0")
+find_package(Boost REQUIRED)
+INCLUDE_DIRECTORIES(${Boost_INCLUDE_DIRS})
+
 find_package(JNI REQUIRED)
 set(source_root_directory ${CMAKE_CURRENT_SOURCE_DIR})
 
