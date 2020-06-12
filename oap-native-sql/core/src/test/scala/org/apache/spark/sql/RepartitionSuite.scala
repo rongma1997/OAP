@@ -1,7 +1,5 @@
 package org.apache.spark.sql
 
-import com.intel.oap.spark.sql.DataFrameReaderImplicits._
-import com.intel.oap.spark.sql.execution.datasources.v2.arrow.ArrowOptions
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.execution.columnar.InMemoryTableScanExec
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeExec
@@ -94,10 +92,7 @@ class TPCHTableRepartitionSuite extends RepartitionSuite {
     .getResource("part-00000-d648dd34-c9d2-4fe9-87f2-770ef3551442-c000.snappy.parquet")
     .getFile
 
-  override lazy val input = spark.read
-    .option(ArrowOptions.KEY_ORIGINAL_FORMAT, "parquet")
-    .option(ArrowOptions.KEY_FILESYSTEM, "hdfs")
-    .arrow(filePath)
+  override lazy val input = spark.read.parquet(filePath)
 
   test("test tpch round robin partitioning") {
     withRepartition(df => df.repartition(2))
