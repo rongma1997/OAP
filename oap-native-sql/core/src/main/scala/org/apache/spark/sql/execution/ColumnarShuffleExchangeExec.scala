@@ -19,7 +19,6 @@ package org.apache.spark.sql.execution
 
 import java.util.Random
 
-import com.intel.sparkColumnarPlugin.expression.ConverterUtils
 import com.intel.sparkColumnarPlugin.vectorized.{
   ArrowColumnarBatchSerializer,
   ArrowWritableColumnVector
@@ -97,7 +96,7 @@ class ColumnarShuffleExchangeExec(
     new ShuffledColumnarBatchRDD(columnarShuffleDependency, readMetrics, partitionStartIndices)
   }
 
-  private var cachedShuffleRDD: ShuffledColumnarBatchRDD = _
+  private var cachedShuffleRDD: ShuffledColumnarBatchRDD = null
 
   override def doExecuteColumnar(): RDD[ColumnarBatch] = {
     if (cachedShuffleRDD == null) {
@@ -121,8 +120,10 @@ object ColumnarShuffleExchangeExec extends Logging {
       dataSize: SQLMetric): ShuffleDependency[Int, ColumnarBatch, ColumnarBatch] = {
 
     val arrowSchema: Schema =
-      ConverterUtils.toArrowSchema(
-        AttributeReference("pid", IntegerType, nullable = false)() +: outputAttributes)
+      ArrowUtils.toArrowSchema(
+        fromAttributes(
+          AttributeReference("pid", IntegerType, nullable = false)() +: outputAttributes),
+        SQLConf.get.sessionLocalTimeZone)
 
     val part: Partitioner = newPartitioning match {
       case RoundRobinPartitioning(numPartitions) => new HashPartitioner(numPartitions)
@@ -181,7 +182,7 @@ object ColumnarShuffleExchangeExec extends Logging {
         (_, cbIterator) => {
           newPartitioning match {
             case SinglePartition =>
-              CloseablePairedColumnarBatchIterator(
+              ClosablePairedColumnarBatchIterator(
                 cbIterator
                   .filter(cb => cb.numRows != 0 && cb.numCols != 0)
                   .map(cb => {
@@ -191,7 +192,7 @@ object ColumnarShuffleExchangeExec extends Logging {
             case RoundRobinPartitioning(numPartitions) =>
               // Distributes elements evenly across output partitions, starting from a random partition.
               var position = new Random(TaskContext.get().partitionId()).nextInt(numPartitions)
-              CloseablePairedColumnarBatchIterator(
+              ClosablePairedColumnarBatchIterator(
                 cbIterator
                   .filter(cb => cb.numRows != 0 && cb.numCols != 0)
                   .map(cb => {
@@ -204,7 +205,7 @@ object ColumnarShuffleExchangeExec extends Logging {
             case h: HashPartitioning =>
               val projection =
                 UnsafeProjection.create(h.partitionIdExpression :: Nil, outputAttributes)
-              CloseablePairedColumnarBatchIterator(
+              ClosablePairedColumnarBatchIterator(
                 cbIterator
                   .filter(cb => cb.numRows != 0 && cb.numCols != 0)
                   .map(cb => {
@@ -216,7 +217,7 @@ object ColumnarShuffleExchangeExec extends Logging {
             case RangePartitioning(sortingExpressions, _) =>
               val projection =
                 UnsafeProjection.create(sortingExpressions.map(_.child), outputAttributes)
-              CloseablePairedColumnarBatchIterator(
+              ClosablePairedColumnarBatchIterator(
                 cbIterator
                   .filter(cb => cb.numRows != 0 && cb.numCols != 0)
                   .map(cb => {
@@ -268,7 +269,7 @@ object ColumnarShuffleExchangeExec extends Logging {
   }
 }
 
-case class CloseablePairedColumnarBatchIterator(iter: Iterator[(Int, ColumnarBatch)])
+case class ClosablePairedColumnarBatchIterator(iter: Iterator[(Int, ColumnarBatch)])
     extends Iterator[(Int, ColumnarBatch)]
     with Logging {
 
@@ -280,7 +281,7 @@ case class CloseablePairedColumnarBatchIterator(iter: Iterator[(Int, ColumnarBat
 
   private def closeAppendedVector(): Unit = {
     if (cur != null) {
-      logDebug("Close appended partition id vector")
+      logDebug("Appended partition id vector closed")
       cur match {
         case (_, cb: ColumnarBatch) =>
           cb.column(0).asInstanceOf[ArrowWritableColumnVector].close()

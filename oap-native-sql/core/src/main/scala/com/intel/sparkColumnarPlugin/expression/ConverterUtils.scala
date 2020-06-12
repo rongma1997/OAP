@@ -18,15 +18,16 @@
 package com.intel.sparkColumnarPlugin.expression
 
 import java.util.concurrent.atomic.AtomicLong
-
 import io.netty.buffer.ArrowBuf
+
 import com.intel.sparkColumnarPlugin.vectorized.ArrowWritableColumnVector
+
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate._
 import org.apache.spark.sql.catalyst.optimizer._
 import org.apache.spark.sql.util.ArrowUtils
 import org.apache.spark.sql.types._
-import org.apache.spark.sql.vectorized.{ColumnVector, ColumnarBatch}
+import org.apache.spark.sql.vectorized.{ColumnarBatch, ColumnVector}
 import org.apache.arrow.vector._
 import org.apache.arrow.vector.ipc.message.ArrowFieldNode
 import org.apache.arrow.vector.ipc.message.ArrowRecordBatch
@@ -34,8 +35,6 @@ import org.apache.arrow.vector.types.pojo.Schema
 import org.apache.arrow.vector.types.pojo.Field
 import org.apache.arrow.vector.types.pojo.ArrowType
 import org.apache.spark.internal.Logging
-import org.apache.spark.sql.execution.ColumnarShuffleExchangeExec.fromAttributes
-import org.apache.spark.sql.internal.SQLConf
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ListBuffer
@@ -76,9 +75,7 @@ object ConverterUtils extends Logging {
     new ArrowRecordBatch(numRowsInBatch, fieldNodes.toList.asJava, inputData.toList.asJava)
   }
 
-  def fromArrowRecordBatch(
-      recordBatchSchema: Schema,
-      recordBatch: ArrowRecordBatch): Array[ArrowWritableColumnVector] = {
+  def fromArrowRecordBatch(recordBatchSchema: Schema, recordBatch: ArrowRecordBatch): Array[ArrowWritableColumnVector] = {
     val numRows = recordBatch.getLength()
     ArrowWritableColumnVector.loadColumns(numRows, recordBatchSchema, recordBatch)
   }
@@ -119,8 +116,7 @@ object ConverterUtils extends Logging {
       case i: IsNull =>
         getAttrFromExpr(i.child)
       case other =>
-        throw new UnsupportedOperationException(
-          s"makeStructField is unable to parse from $other (${other.getClass}).")
+        throw new UnsupportedOperationException(s"makeStructField is unable to parse from $other (${other.getClass}).")
     }
   }
 
@@ -138,15 +134,9 @@ object ConverterUtils extends Logging {
         //TODO: a walkaround since we didn't support cast yet
         if (a.child.isInstanceOf[Cast]) {
           val tmp = if (name != "None") {
-            new Alias(a.child.asInstanceOf[Cast].child, name)(
-              a.exprId,
-              a.qualifier,
-              a.explicitMetadata)
+            new Alias(a.child.asInstanceOf[Cast].child, name)(a.exprId, a.qualifier, a.explicitMetadata)
           } else {
-            new Alias(a.child.asInstanceOf[Cast].child, a.name)(
-              a.exprId,
-              a.qualifier,
-              a.explicitMetadata)
+            new Alias(a.child.asInstanceOf[Cast].child, a.name)(a.exprId, a.qualifier, a.explicitMetadata)
           }
           tmp.toAttribute.asInstanceOf[AttributeReference]
         } else {
@@ -176,21 +166,15 @@ object ConverterUtils extends Logging {
   }
 
   def combineArrowRecordBatch(rb1: ArrowRecordBatch, rb2: ArrowRecordBatch): ArrowRecordBatch = {
-    val numRows = rb1.getLength()
-    val rb1_nodes = rb1.getNodes()
-    val rb2_nodes = rb2.getNodes()
-    val rb1_bufferlist = rb1.getBuffers()
-    val rb2_bufferlist = rb2.getBuffers()
+     val numRows = rb1.getLength()
+     val rb1_nodes = rb1.getNodes()
+     val rb2_nodes = rb2.getNodes()
+     val rb1_bufferlist = rb1.getBuffers()
+     val rb2_bufferlist = rb2.getBuffers()
 
-    val combined_nodes = rb1_nodes.addAll(rb2_nodes)
-    val combined_bufferlist = rb1_bufferlist.addAll(rb2_bufferlist)
-    new ArrowRecordBatch(numRows, rb1_nodes, rb1_bufferlist)
-  }
-
-  def toArrowSchema(attributes: Seq[Attribute]): Schema = {
-    def fromAttributes(attributes: Seq[Attribute]): StructType =
-      StructType(attributes.map(a => StructField(a.name, a.dataType, a.nullable, a.metadata)))
-    ArrowUtils.toArrowSchema(fromAttributes(attributes), SQLConf.get.sessionLocalTimeZone)
+     val combined_nodes = rb1_nodes.addAll(rb2_nodes)
+     val combined_bufferlist = rb1_bufferlist.addAll(rb2_bufferlist)
+     new ArrowRecordBatch(numRows, rb1_nodes, rb1_bufferlist)
   }
 
   override def toString(): String = {
@@ -198,3 +182,4 @@ object ConverterUtils extends Logging {
   }
 
 }
+
