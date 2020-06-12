@@ -135,10 +135,14 @@ spark.sql.parquet.columnarReaderBatchSize 4096
 spark.sql.sources.useV1SourceList avro
 spark.sql.join.preferSortMergeJoin false
 spark.sql.extensions com.intel.sparkColumnarPlugin.ColumnarPlugin
-spark.shuffle.manager org.apache.spark.shuffle.sort.ColumnarShuffleManager
 
 spark.driver.extraClassPath ${PATH_TO_OAP_NATIVE_SQL}/core/target/spark-columnar-core-1.0-jar-with-dependencies.jar
 spark.executor.extraClassPath ${PATH_TO_OAP_NATIVE_SQL}/core/target/spark-columnar-core-1.0-jar-with-dependencies.jar
+
+# Extra configuration to enable columnar shuffle
+spark.shuffle.manager org.apache.spark.shuffle.sort.ColumnarShuffleManager
+spark.sql.codegen.wholeStage false
+spark.shuffle.compress false
 
 ######
 ```
