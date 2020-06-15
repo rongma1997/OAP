@@ -1,3 +1,20 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #include "shuffle/splitter.h"
 #include <arrow/buffer_builder.h>
 #include <arrow/filesystem/filesystem.h>
@@ -201,15 +218,14 @@ class Splitter::Impl {
     }                                                                                   \
   }
 
-#define WRITE_BINARY(func, T, src_arr)                                \
-  if (!src_arr.empty()) {                                                      \
-    for (i = read_offset; i < num_rows; ++i) {                                 \
-      ARROW_ASSIGN_OR_RAISE(auto result,                                       \
-                            pid_writer_[new_id[i]]->func(src_arr, i)) \
-      if (!result) {                                                           \
-        break;                                                                 \
-      }                                                                        \
-    }                                                                          \
+#define WRITE_BINARY(func, T, src_arr)                                             \
+  if (!src_arr.empty()) {                                                          \
+    for (i = read_offset; i < num_rows; ++i) {                                     \
+      ARROW_ASSIGN_OR_RAISE(auto result, pid_writer_[new_id[i]]->func(src_arr, i)) \
+      if (!result) {                                                               \
+        break;                                                                     \
+      }                                                                            \
+    }                                                                              \
   }
 
     while (read_offset < num_rows) {
@@ -220,12 +236,10 @@ class Splitter::Impl {
       WRITE_FIXEDWIDTH(Type::SHUFFLE_8BYTE, uint64_t);
       WRITE_FIXEDWIDTH(Type::SHUFFLE_BIT, bool);
       WRITE_BINARY(WriteBinary, arrow::BinaryType, src_binary_arr);
-      WRITE_BINARY(WriteLargeBinary, arrow::LargeBinaryType,
-                   src_large_binary_arr);
-      WRITE_BINARY(WriteNullableBinary, arrow::BinaryType,
-                   src_nullable_binary_arr);
-      WRITE_BINARY(WriteNullableLargeBinary,
-                   arrow::LargeBinaryType, src_nullable_large_binary_arr);
+      WRITE_BINARY(WriteLargeBinary, arrow::LargeBinaryType, src_large_binary_arr);
+      WRITE_BINARY(WriteNullableBinary, arrow::BinaryType, src_nullable_binary_arr);
+      WRITE_BINARY(WriteNullableLargeBinary, arrow::LargeBinaryType,
+                   src_nullable_large_binary_arr);
       read_offset = i;
     }
 #undef WRITE_FIXEDWIDTH

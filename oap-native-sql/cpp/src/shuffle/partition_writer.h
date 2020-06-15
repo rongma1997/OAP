@@ -1,3 +1,20 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #pragma once
 
 #include <arrow/array/builder_binary.h>
@@ -15,8 +32,8 @@ namespace shuffle {
 namespace detail {
 
 template <typename T>
-arrow::Status inline Write(const SrcBuffers& src, int64_t src_offset, const BufferMessages& dst,
-                  int64_t dst_offset) {
+arrow::Status inline Write(const SrcBuffers& src, int64_t src_offset,
+                           const BufferMessages& dst, int64_t dst_offset) {
   for (size_t i = 0; i < src.size(); ++i) {
     dst[i]->validity_addr[dst_offset / 8] |=
         (((src[i].validity_addr)[src_offset / 8] >> (src_offset % 8)) & 1)
@@ -29,7 +46,7 @@ arrow::Status inline Write(const SrcBuffers& src, int64_t src_offset, const Buff
 
 template <>
 arrow::Status inline Write<bool>(const SrcBuffers& src, int64_t src_offset,
-                        const BufferMessages& dst, int64_t dst_offset) {
+                                 const BufferMessages& dst, int64_t dst_offset) {
   for (size_t i = 0; i < src.size(); ++i) {
     dst[i]->validity_addr[dst_offset / 8] |=
         (((src[i].validity_addr)[src_offset / 8] >> (src_offset % 8)) & 1)
@@ -42,10 +59,10 @@ arrow::Status inline Write<bool>(const SrcBuffers& src, int64_t src_offset,
 }
 
 template <typename T, typename ArrayType = typename arrow::TypeTraits<T>::ArrayType,
-    typename BuilderType = typename arrow::TypeTraits<T>::BuilderType>
+          typename BuilderType = typename arrow::TypeTraits<T>::BuilderType>
 arrow::enable_if_binary_like<T, arrow::Status> inline WriteBinary(
-    const std::vector<std::shared_ptr<ArrayType>>& src,
-    int64_t offset, const std::deque<std::unique_ptr<BuilderType>>& builders) {
+    const std::vector<std::shared_ptr<ArrayType>>& src, int64_t offset,
+    const std::deque<std::unique_ptr<BuilderType>>& builders) {
   using offset_type = typename T::offset_type;
 
   for (size_t i = 0; i < src.size(); ++i) {
@@ -57,10 +74,10 @@ arrow::enable_if_binary_like<T, arrow::Status> inline WriteBinary(
 }
 
 template <typename T, typename ArrayType = typename arrow::TypeTraits<T>::ArrayType,
-    typename BuilderType = typename arrow::TypeTraits<T>::BuilderType>
+          typename BuilderType = typename arrow::TypeTraits<T>::BuilderType>
 arrow::enable_if_binary_like<T, arrow::Status> inline WriteNullableBinary(
-    const std::vector<std::shared_ptr<ArrayType>>& src,
-    int64_t offset, const std::deque<std::unique_ptr<BuilderType>>& builders) {
+    const std::vector<std::shared_ptr<ArrayType>>& src, int64_t offset,
+    const std::deque<std::unique_ptr<BuilderType>>& builders) {
   using offset_type = typename T::offset_type;
 
   for (size_t i = 0; i < src.size(); ++i) {
@@ -161,7 +178,8 @@ class PartitionWriter {
       return false;
     }
 
-    RETURN_NOT_OK(detail::Write<T>(src, offset, buffers_[type_id], write_offset_[type_id]));
+    RETURN_NOT_OK(
+        detail::Write<T>(src, offset, buffers_[type_id], write_offset_[type_id]));
 
     ++write_offset_[type_id];
     return true;
@@ -172,8 +190,7 @@ class PartitionWriter {
   /// \param offset index of the element in source binary array
   /// \return true if write performed, else false
   arrow::Result<bool> inline WriteBinary(
-      const std::vector<std::shared_ptr<arrow::BinaryArray>>& src,
-      int64_t offset) {
+      const std::vector<std::shared_ptr<arrow::BinaryArray>>& src, int64_t offset) {
     ARROW_ASSIGN_OR_RAISE(auto write_ends, CheckTypeWriteEnds(Type::SHUFFLE_BINARY))
     if (write_ends) {
       return false;
@@ -190,14 +207,14 @@ class PartitionWriter {
   /// \param offset index of the element in source binary array
   /// \return
   arrow::Result<bool> inline WriteLargeBinary(
-      const std::vector<std::shared_ptr<arrow::LargeBinaryArray>>& src,
-      int64_t offset) {
+      const std::vector<std::shared_ptr<arrow::LargeBinaryArray>>& src, int64_t offset) {
     ARROW_ASSIGN_OR_RAISE(auto write_ends, CheckTypeWriteEnds(Type::SHUFFLE_LARGE_BINARY))
     if (write_ends) {
       return false;
     }
 
-    RETURN_NOT_OK(detail::WriteBinary<arrow::LargeBinaryType>(src, offset, large_binary_builders_));
+    RETURN_NOT_OK(
+        detail::WriteBinary<arrow::LargeBinaryType>(src, offset, large_binary_builders_));
 
     ++write_offset_[Type::SHUFFLE_LARGE_BINARY];
     return true;
@@ -207,14 +224,14 @@ class PartitionWriter {
   /// \param offset index of the element in source binary array
   /// \return
   arrow::Result<bool> inline WriteNullableBinary(
-      const std::vector<std::shared_ptr<arrow::BinaryArray>>& src,
-      int64_t offset) {
+      const std::vector<std::shared_ptr<arrow::BinaryArray>>& src, int64_t offset) {
     ARROW_ASSIGN_OR_RAISE(auto write_ends, CheckTypeWriteEnds(Type::SHUFFLE_BINARY))
     if (write_ends) {
       return false;
     }
 
-    RETURN_NOT_OK(detail::WriteNullableBinary<arrow::BinaryType>(src, offset, binary_builders_));
+    RETURN_NOT_OK(
+        detail::WriteNullableBinary<arrow::BinaryType>(src, offset, binary_builders_));
 
     ++write_offset_[Type::SHUFFLE_BINARY];
     return true;
@@ -225,14 +242,14 @@ class PartitionWriter {
   /// \param offset index of the element in source binary array
   /// \return
   arrow::Result<bool> inline WriteNullableLargeBinary(
-      const std::vector<std::shared_ptr<arrow::LargeBinaryArray>>& src,
-      int64_t offset) {
+      const std::vector<std::shared_ptr<arrow::LargeBinaryArray>>& src, int64_t offset) {
     ARROW_ASSIGN_OR_RAISE(auto write_ends, CheckTypeWriteEnds(Type::SHUFFLE_LARGE_BINARY))
     if (write_ends) {
       return false;
     }
 
-    RETURN_NOT_OK(detail::WriteNullableBinary<arrow::LargeBinaryType>(src, offset, large_binary_builders_));
+    RETURN_NOT_OK(detail::WriteNullableBinary<arrow::LargeBinaryType>(
+        src, offset, large_binary_builders_));
 
     ++write_offset_[Type::SHUFFLE_LARGE_BINARY];
     return true;
