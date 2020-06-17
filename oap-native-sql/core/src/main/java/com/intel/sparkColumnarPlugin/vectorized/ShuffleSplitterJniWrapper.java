@@ -16,7 +16,7 @@ public class ShuffleSplitterJniWrapper {
    * @return native splitter instance id if created successfully.
    * @throws RuntimeException
    */
-  public native long make(byte[] schemaBuf, long bufferSize) throws RuntimeException;
+  public native long make(byte[] schemaBuf, long bufferSize, String localDirs) throws RuntimeException;
 
   /**
    * Split one record batch represented by bufAddrs and bufSizes into several batches. The batch is split according to

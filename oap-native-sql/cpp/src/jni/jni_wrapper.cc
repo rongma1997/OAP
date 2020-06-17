@@ -1072,9 +1072,15 @@ Java_com_intel_sparkColumnarPlugin_datasource_parquet_ParquetWriterJniWrapper_na
 
 JNIEXPORT jlong JNICALL
 Java_com_intel_sparkColumnarPlugin_vectorized_ShuffleSplitterJniWrapper_make(
-    JNIEnv* env, jobject, jbyteArray schema_arr, jlong buffer_size) {
+    JNIEnv* env, jobject, jbyteArray schema_arr, jlong buffer_size, jstring pathObj) {
   std::shared_ptr<arrow::Schema> schema;
   arrow::Status status;
+
+  // split pathObj to paths
+  auto joined_path = env->GetStringUTFChars(pathObj, JNI_FALSE);
+  setenv("NATIVESQL_SPARK_LOCAL_DIRS", joined_path, 1);
+
+  env->ReleaseStringUTFChars(pathObj, joined_path);
 
   status = MakeSchema(env, schema_arr, &schema);
   if (!status.ok()) {

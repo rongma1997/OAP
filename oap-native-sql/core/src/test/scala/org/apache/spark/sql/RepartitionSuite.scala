@@ -22,8 +22,9 @@ class RepartitionSuite extends QueryTest with SharedSparkSession {
       .set("spark.sql.extensions", "com.intel.sparkColumnarPlugin.ColumnarPlugin")
       .set("spark.sql.execution.arrow.maxRecordsPerBatch", "4096")
       .set("spark.shuffle.manager", "org.apache.spark.shuffle.sort.ColumnarShuffleManager")
-      .set("spark.sql.codegen.wholeStage", "false")
-      .set("spark.shuffle.compress", "false")
+//      .set("spark.shuffle.compress", "false")
+      .set("spark.eventLog.enabled", "true")
+      .set("spark.eventLog.dir", "file:///home/mr/spark/sparklog")
 
   def checkCoulumnarExec(data: DataFrame) = {
     val found = data.queryExecution.executedPlan
@@ -110,6 +111,26 @@ class TPCHTableRepartitionSuite extends RepartitionSuite {
     withTransformationAndRepartition(
       df => df.groupBy("n_regionkey").agg(Map("n_nationkey" -> "sum")),
       df => df.repartition(2))
+  }
+
+  test("tpch q3") {
+    val databaseName = scala.util.Properties.envOrElse("databaseName", "tpch1_d4d_nopart")
+    spark.read
+      .parquet(s"hdfs://127.0.0.1:9000/${databaseName}/customer")
+      .createOrReplaceTempView("customer")
+    spark.read
+      .parquet(s"hdfs://127.0.0.1:9000/${databaseName}/orders")
+      .createOrReplaceTempView("orders")
+    spark.read
+      .parquet(s"hdfs://127.0.0.1:9000/${databaseName}/lineitem")
+      .createOrReplaceTempView("lineitem")
+    val q3 = spark.sql(s"""select l_orderkey, sum(l_extendedprice * (1 - l_discount)) as revenue,
+o_orderdate, o_shippriority from customer, orders, lineitem where c_mktsegment
+= 'BUILDING' and c_custkey = o_custkey and l_orderkey = o_orderkey and
+o_orderdate < "1995-03-05" and l_shipdate > "1995-03-05" group by
+l_orderkey, o_orderdate, o_shippriority order by revenue desc, o_orderdate""")
+    q3.explain
+    q3.collect
   }
 }
 

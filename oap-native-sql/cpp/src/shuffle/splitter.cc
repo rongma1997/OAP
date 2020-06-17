@@ -88,9 +88,12 @@ class Splitter::Impl {
         *std::max_element(std::cbegin(remove_null_id), std::cend(remove_null_id));
 
     auto local_fs = std::make_shared<arrow::fs::LocalFileSystem>();
-    fs_base_dir_ = *arrow::internal::TemporaryDir::Make("native-shuffle-");
-    fs_ = std::make_unique<arrow::fs::SubTreeFileSystem>(fs_base_dir_->path().ToString(),
-                                                         local_fs);
+    ARROW_ASSIGN_OR_RAISE(auto local_dirs, GetConfiguredLocalDirs());
+    std::transform(local_dirs.cbegin(), local_dirs.cend(), std::back_inserter(local_dirs_fs_),
+                   [local_fs](const auto& base_dir) {
+                     return std::make_unique<arrow::fs::SubTreeFileSystem>(base_dir,
+                                                                           local_fs);
+                   });
     return arrow::Status::OK();
   }
 
@@ -166,14 +169,14 @@ class Splitter::Impl {
       auto pid = pid_cast_p[i];
       if (pid_to_new_id_.find(pid) == pid_to_new_id_.end()) {
         auto temp_dir = GenerateUUID();
-        while ((*fs_->GetFileInfo(temp_dir)).type() != arrow::fs::FileType::NotFound) {
+        const auto& fs = local_dirs_fs_[num_partitiions_ % local_dirs_fs_.size()];
+        while ((*fs->GetFileInfo(temp_dir)).type() != arrow::fs::FileType::NotFound) {
           temp_dir = GenerateUUID();
         }
-        RETURN_NOT_OK(fs_->CreateDir(temp_dir));
-        auto temp_file_path =
-            arrow::fs::internal::ConcatAbstractPath(
-                fs_base_dir_->path().ToString(), (*fs_->GetFileInfo(temp_dir)).path()) +
-            "/data";
+        RETURN_NOT_OK(fs->CreateDir(temp_dir));
+        auto temp_file_path = arrow::fs::internal::ConcatAbstractPath(
+                                  fs->base_path(), (*fs->GetFileInfo(temp_dir)).path()) +
+                              "/data";
         temp_files.push_back({pid, temp_file_path});
 
         ARROW_ASSIGN_OR_RAISE(
@@ -201,15 +204,14 @@ class Splitter::Impl {
     }                                                                                   \
   }
 
-#define WRITE_BINARY(func, T, src_arr)                                \
-  if (!src_arr.empty()) {                                                      \
-    for (i = read_offset; i < num_rows; ++i) {                                 \
-      ARROW_ASSIGN_OR_RAISE(auto result,                                       \
-                            pid_writer_[new_id[i]]->func(src_arr, i)) \
-      if (!result) {                                                           \
-        break;                                                                 \
-      }                                                                        \
-    }                                                                          \
+#define WRITE_BINARY(func, T, src_arr)                                             \
+  if (!src_arr.empty()) {                                                          \
+    for (i = read_offset; i < num_rows; ++i) {                                     \
+      ARROW_ASSIGN_OR_RAISE(auto result, pid_writer_[new_id[i]]->func(src_arr, i)) \
+      if (!result) {                                                               \
+        break;                                                                     \
+      }                                                                            \
+    }                                                                              \
   }
 
     while (read_offset < num_rows) {
@@ -220,12 +222,10 @@ class Splitter::Impl {
       WRITE_FIXEDWIDTH(Type::SHUFFLE_8BYTE, uint64_t);
       WRITE_FIXEDWIDTH(Type::SHUFFLE_BIT, bool);
       WRITE_BINARY(WriteBinary, arrow::BinaryType, src_binary_arr);
-      WRITE_BINARY(WriteLargeBinary, arrow::LargeBinaryType,
-                   src_large_binary_arr);
-      WRITE_BINARY(WriteNullableBinary, arrow::BinaryType,
-                   src_nullable_binary_arr);
-      WRITE_BINARY(WriteNullableLargeBinary,
-                   arrow::LargeBinaryType, src_nullable_large_binary_arr);
+      WRITE_BINARY(WriteLargeBinary, arrow::LargeBinaryType, src_large_binary_arr);
+      WRITE_BINARY(WriteNullableBinary, arrow::BinaryType, src_nullable_binary_arr);
+      WRITE_BINARY(WriteNullableLargeBinary, arrow::LargeBinaryType,
+                   src_nullable_large_binary_arr);
       read_offset = i;
     }
 #undef WRITE_FIXEDWIDTH
@@ -249,6 +249,45 @@ class Splitter::Impl {
       res += bytes;
     }
     return res;
+  }
+
+  arrow::Result<std::string> CreateAttemptSubDir(const std::string& root_dir) {
+    auto attempt_sub_dir = arrow::fs::internal::ConcatAbstractPath(root_dir, "columnar-shuffle-" + GenerateUUID());
+    ARROW_ASSIGN_OR_RAISE(auto created, arrow::internal::CreateDirTree(
+        *arrow::internal::PlatformFilename::FromString(attempt_sub_dir)));
+    // if create succeed, use created subdir, else use root dir
+    if (created) {
+      return attempt_sub_dir;
+    } else {
+      return root_dir;
+    }
+  }
+
+  arrow::Result<std::vector<std::string>> GetConfiguredLocalDirs() {
+    auto joined_dirs_c = std::getenv("NATIVESQL_SPARK_LOCAL_DIRS");
+    if (joined_dirs_c != nullptr && strcmp(joined_dirs_c, "") > 0) {
+      auto joined_dirs = std::string(joined_dirs_c);
+      std::string delimiter = ",";
+      std::vector<std::string> dirs;
+
+      size_t pos = 0;
+      std::string root_dir;
+      while ((pos = joined_dirs.find(delimiter)) != std::string::npos) {
+        root_dir = joined_dirs.substr(0, pos);
+        if (root_dir.length() > 0) {
+          dirs.push_back(*CreateAttemptSubDir(root_dir));
+        }
+        joined_dirs.erase(0, pos + delimiter.length());
+      }
+      if (joined_dirs.length() > 0) {
+        dirs.push_back(*CreateAttemptSubDir(joined_dirs));
+      }
+      return dirs;
+    } else {
+      ARROW_ASSIGN_OR_RAISE(auto arrow_tmp_dir,
+                            arrow::internal::TemporaryDir::Make("columnar-shuffle-"));
+      return std::vector<std::string>{arrow_tmp_dir->path().ToString()};
+    }
   }
 
   Type::typeId column_type_id(int i) const { return column_type_id_[i]; }
@@ -285,8 +324,7 @@ class Splitter::Impl {
   int64_t buffer_size_ = kDefaultSplitterBufferSize;
   arrow::Compression::type compression_codec_ = arrow::Compression::UNCOMPRESSED;
 
-  std::unique_ptr<arrow::fs::FileSystem> fs_;
-  std::unique_ptr<arrow::internal::TemporaryDir> fs_base_dir_;
+  std::vector<std::unique_ptr<arrow::fs::SubTreeFileSystem>> local_dirs_fs_;
 };
 
 arrow::Result<std::shared_ptr<Splitter>> Splitter::Make(

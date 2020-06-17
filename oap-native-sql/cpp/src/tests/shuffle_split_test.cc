@@ -1,5 +1,4 @@
 #include <arrow/io/api.h>
-#include <arrow/io/interfaces.h>
 #include <arrow/ipc/message.h>
 #include <arrow/ipc/reader.h>
 #include <arrow/ipc/util.h>
@@ -17,6 +16,7 @@ namespace shuffle {
 class ShuffleTest : public ::testing::Test {
  protected:
   void SetUp() {
+
     auto f_pid = field("f_pid", arrow::int32());
     auto f_na = field("f_na", arrow::null());
     auto f_int8 = field("f_int8", arrow::int8());
@@ -24,6 +24,14 @@ class ShuffleTest : public ::testing::Test {
     auto f_uint64 = field("f_uint64", arrow::uint64());
     auto f_bool = field("f_bool", arrow::boolean());
     auto f_string = field("f_string", arrow::utf8());
+
+    std::shared_ptr<arrow::internal::TemporaryDir> tmp_dir1;
+    std::shared_ptr<arrow::internal::TemporaryDir> tmp_dir2;
+    ARROW_ASSIGN_OR_THROW(tmp_dir1, std::move(arrow::internal::TemporaryDir::Make(tmp_dir_prefix)))
+    ARROW_ASSIGN_OR_THROW(tmp_dir2, std::move(arrow::internal::TemporaryDir::Make(tmp_dir_prefix)))
+    auto config_dirs = tmp_dir1->path().ToString() + "," + tmp_dir2->path().ToString();
+
+    setenv("NATIVESQL_SPARK_LOCAL_DIRS", config_dirs.c_str(), 1);
 
     schema_ = arrow::schema({f_pid, f_na, f_int8, f_int16, f_uint64, f_bool, f_string});
     ARROW_ASSIGN_OR_THROW(writer_schema_, schema_->RemoveField(0))
@@ -34,6 +42,8 @@ class ShuffleTest : public ::testing::Test {
   void TearDown() {
     ASSERT_NOT_OK(splitter_->Stop());
   }
+
+  std::string tmp_dir_prefix = "columnar-shuffle-test";
 
   std::string c_pid_ = "[1, 2, 1, 10]";
   std::vector<std::string> input_data_ = {c_pid_,
@@ -147,18 +157,19 @@ TEST_F(ShuffleTest, TestCreateTempFile) {
   ASSERT_NOT_OK(splitter_->Split(*input_batch));
   ASSERT_EQ(splitter_->GetPartitionFileInfo().size(), 4);
 
-  auto pfn0 = *arrow::internal::PlatformFilename::FromString(
-      splitter_->GetPartitionFileInfo()[0].second);
-  auto pfn1 = *arrow::internal::PlatformFilename::FromString(
-      splitter_->GetPartitionFileInfo()[1].second);
-  auto pfn2 = *arrow::internal::PlatformFilename::FromString(
-      splitter_->GetPartitionFileInfo()[2].second);
-  auto pfn3 = *arrow::internal::PlatformFilename::FromString(
-      splitter_->GetPartitionFileInfo()[3].second);
-  ASSERT_EQ(*arrow::internal::FileExists(pfn0), true);
-  ASSERT_EQ(*arrow::internal::FileExists(pfn1), true);
-  ASSERT_EQ(*arrow::internal::FileExists(pfn2), true);
-  ASSERT_EQ(*arrow::internal::FileExists(pfn3), true);
+  auto pfn0 = splitter_->GetPartitionFileInfo()[0].second;
+  auto pfn1 = splitter_->GetPartitionFileInfo()[1].second;
+  auto pfn2 = splitter_->GetPartitionFileInfo()[2].second;
+  auto pfn3 = splitter_->GetPartitionFileInfo()[3].second;
+  ASSERT_EQ(*arrow::internal::FileExists(*arrow::internal::PlatformFilename::FromString(pfn0)), true);
+  ASSERT_EQ(*arrow::internal::FileExists(*arrow::internal::PlatformFilename::FromString(pfn1)), true);
+  ASSERT_EQ(*arrow::internal::FileExists(*arrow::internal::PlatformFilename::FromString(pfn2)), true);
+  ASSERT_EQ(*arrow::internal::FileExists(*arrow::internal::PlatformFilename::FromString(pfn3)), true);
+
+  ASSERT_NE(pfn0.find(tmp_dir_prefix), std::string::npos);
+  ASSERT_NE(pfn1.find(tmp_dir_prefix), std::string::npos);
+  ASSERT_NE(pfn2.find(tmp_dir_prefix), std::string::npos);
+  ASSERT_NE(pfn3.find(tmp_dir_prefix), std::string::npos);
 }
 
 TEST_F(ShuffleTest, TestWriterMakeArrowRecordBatch) {

@@ -14,7 +14,6 @@ import org.apache.arrow.vector.types.pojo.Schema
 import org.apache.spark._
 import org.apache.spark.internal.Logging
 import org.apache.spark.scheduler.MapStatus
-import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.vectorized.ColumnarBatch
 import org.apache.spark.util.Utils
 
@@ -64,7 +63,9 @@ class ColumnarShuffleWriter[K, V](
 
     if (nativeSplitter == 0) {
       val schema: Schema = Schema.deserialize(ByteBuffer.wrap(dep.serializedSchema))
-      nativeSplitter = jniWrapper.make(SchemaUtils.get.serialize(schema), nativeBufferSize)
+      val localDirs = Utils.getConfiguredLocalDirs(conf).mkString(",")
+      nativeSplitter =
+        jniWrapper.make(SchemaUtils.get.serialize(schema), nativeBufferSize, localDirs)
       if (compressionEnabled) {
         jniWrapper.setCompressionCodec(nativeSplitter, compressionCodec)
       }
