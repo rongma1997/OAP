@@ -1091,7 +1091,6 @@ Java_com_intel_sparkColumnarPlugin_vectorized_ShuffleSplitterJniWrapper_make(
   std::shared_ptr<arrow::Schema> schema;
   arrow::Status status;
 
-  // split pathObj to paths
   auto joined_path = env->GetStringUTFChars(pathObj, JNI_FALSE);
   setenv("NATIVESQL_SPARK_LOCAL_DIRS", joined_path, 1);
 

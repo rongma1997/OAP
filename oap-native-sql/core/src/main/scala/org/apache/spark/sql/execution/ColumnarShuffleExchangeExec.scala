@@ -31,7 +31,7 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.serializer.Serializer
 import org.apache.spark.shuffle.ColumnarShuffleDependency
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.codegen.{CodegenContext, LazilyGeneratedOrdering}
+import org.apache.spark.sql.catalyst.expressions.codegen.LazilyGeneratedOrdering
 import org.apache.spark.sql.catalyst.expressions.{
   Attribute,
   AttributeReference,
@@ -59,8 +59,7 @@ class ColumnarShuffleExchangeExec(
     override val outputPartitioning: Partitioning,
     child: SparkPlan,
     canChangeNumPartitions: Boolean = true)
-    extends ShuffleExchangeExec(outputPartitioning, child, canChangeNumPartitions)
-    with CodegenSupport {
+    extends ShuffleExchangeExec(outputPartitioning, child, canChangeNumPartitions) {
 
   private lazy val writeMetrics =
     SQLShuffleWriteMetricsReporter.createShuffleWriteMetrics(sparkContext)
@@ -105,14 +104,6 @@ class ColumnarShuffleExchangeExec(
     }
     cachedShuffleRDD
   }
-
-  override def supportCodegen: Boolean = false
-
-  override def inputRDDs(): Seq[RDD[InternalRow]] =
-    throw new UnsupportedOperationException
-
-  override protected def doProduce(ctx: CodegenContext): String =
-    throw new UnsupportedOperationException
 }
 
 object ColumnarShuffleExchangeExec extends Logging {
