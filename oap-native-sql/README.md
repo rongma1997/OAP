@@ -141,7 +141,6 @@ spark.executor.extraClassPath ${PATH_TO_OAP_NATIVE_SQL}/core/target/spark-column
 
 # Extra configuration to enable columnar shuffle
 spark.shuffle.manager org.apache.spark.shuffle.sort.ColumnarShuffleManager
-spark.shuffle.compress false
 
 ######
 ```

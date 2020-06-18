@@ -54,7 +54,6 @@ class ColumnarShuffleWriterSuite extends SharedSparkSession {
       .set("spark.file.transferTo", "true")
       .set("spark.shuffle.manager", "org.apache.spark.shuffle.sort.ColumnarShuffleManager")
       .set("spark.sql.execution.arrow.maxRecordsPerBatch", "4096")
-      .set("spark.shuffle.compress", "false")
 
   private var taskMetrics: TaskMetrics = _
   private var tempDir: File = _

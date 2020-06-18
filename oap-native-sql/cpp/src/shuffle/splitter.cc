@@ -268,7 +268,7 @@ class Splitter::Impl {
     return res;
   }
 
-  arrow::Result<std::string> CreateAttemptSubDir(const std::string& root_dir) {
+  static arrow::Result<std::string> CreateAttemptSubDir(const std::string& root_dir) {
     auto attempt_sub_dir = arrow::fs::internal::ConcatAbstractPath(root_dir, "columnar-shuffle-" + GenerateUUID());
     ARROW_ASSIGN_OR_RAISE(auto created, arrow::internal::CreateDirTree(
         *arrow::internal::PlatformFilename::FromString(attempt_sub_dir)));
@@ -280,7 +280,7 @@ class Splitter::Impl {
     }
   }
 
-  arrow::Result<std::vector<std::string>> GetConfiguredLocalDirs() {
+  static arrow::Result<std::vector<std::string>> GetConfiguredLocalDirs() {
     auto joined_dirs_c = std::getenv("NATIVESQL_SPARK_LOCAL_DIRS");
     if (joined_dirs_c != nullptr && strcmp(joined_dirs_c, "") > 0) {
       auto joined_dirs = std::string(joined_dirs_c);

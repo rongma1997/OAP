@@ -39,7 +39,6 @@ class RepartitionSuite extends QueryTest with SharedSparkSession {
       .set("spark.sql.extensions", "com.intel.sparkColumnarPlugin.ColumnarPlugin")
       .set("spark.sql.execution.arrow.maxRecordsPerBatch", "4096")
       .set("spark.shuffle.manager", "org.apache.spark.shuffle.sort.ColumnarShuffleManager")
-      .set("spark.shuffle.compress", "false")
 
   def checkCoulumnarExec(data: DataFrame) = {
     val found = data.queryExecution.executedPlan
