@@ -135,7 +135,7 @@ private class ArrowColumnarBatchSerializerInstance(readBatchNumRows: SQLMetric)
             throw new EOFException
           }
         } else {
-          reader = new ArrowStreamReader(in, allocator)
+          reader = new ArrowCompressedStreamReader(in, allocator)
           try {
             root = reader.getVectorSchemaRoot
           } catch {
