@@ -30,6 +30,7 @@
 #include <arrow/record_batch.h>
 #include <arrow/status.h>
 #include <arrow/type.h>
+#include <arrow/util/parallel.h>
 
 #include <gandiva/arrow.h>
 #include <gandiva/gandiva_aliases.h>
@@ -206,6 +207,52 @@ jbyteArray ToSchemaByteArray(JNIEnv* env, std::shared_ptr<arrow::Schema> schema)
   auto src = reinterpret_cast<const jbyte*>(buffer->data());
   env->SetByteArrayRegion(out, 0, buffer->size(), src);
   return out;
+}
+
+arrow::Status DecompressBuffers(arrow::Compression::type compression,
+                                const arrow::ipc::IpcReadOptions& options,
+                                const uint8_t* buf_mask,
+                                std::vector<std::shared_ptr<arrow::Buffer>>& buffers) {
+  std::unique_ptr<arrow::util::Codec> codec;
+  ARROW_ASSIGN_OR_RAISE(codec, arrow::util::Codec::Create(compression));
+
+  auto DecompressOne = [&buffers, &buf_mask, &codec, &options](int i) {
+    if (buffers[i] != nullptr && buffers[i]->size() > 0) {
+      // if the buffer is rebult to uncompressed on java side, return
+      if (arrow::BitUtil::GetBit(buf_mask, i)) {
+        return arrow::Status::OK();
+      }
+
+      if (buffers[i]->size() < 8) {
+        return arrow::Status::Invalid(
+            "Likely corrupted message, compressed buffers "
+            "are larger than 8 bytes by construction");
+      }
+      const uint8_t* data = buffers[i]->data();
+      int64_t compressed_size = buffers[i]->size() - sizeof(int64_t);
+      int64_t uncompressed_size =
+          arrow::BitUtil::FromLittleEndian(arrow::util::SafeLoadAs<int64_t>(data));
+
+      ARROW_ASSIGN_OR_RAISE(auto uncompressed,
+                            AllocateBuffer(uncompressed_size, options.memory_pool));
+
+      int64_t actual_decompressed;
+      ARROW_ASSIGN_OR_RAISE(
+          actual_decompressed,
+          codec->Decompress(compressed_size, data + sizeof(int64_t), uncompressed_size,
+                            uncompressed->mutable_data()));
+      if (actual_decompressed != uncompressed_size) {
+        return arrow::Status::Invalid("Failed to fully decompress buffer, expected ",
+                                      uncompressed_size, " bytes but decompressed ",
+                                      actual_decompressed);
+      }
+      buffers[i] = std::move(uncompressed);
+    }
+    return arrow::Status::OK();
+  };
+
+  return ::arrow::internal::OptionalParallelFor(
+      options.use_threads, static_cast<int>(buffers.size()), DecompressOne);
 }
 
 arrow::Result<std::shared_ptr<arrow::Buffer>> DecompressBuffer(

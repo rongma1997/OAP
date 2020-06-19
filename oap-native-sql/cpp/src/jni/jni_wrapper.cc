@@ -1256,12 +1256,6 @@ Java_com_intel_sparkColumnarPlugin_vectorized_ShuffleDecompressionJniWrapper_dec
     env->ThrowNew(io_exception_class, error_message.c_str());
   }
 
-  auto in_buf_addrs = env->GetLongArrayElements(buf_addrs, JNI_FALSE);
-  auto in_buf_sizes = env->GetLongArrayElements(buf_sizes, JNI_FALSE);
-  auto in_buf_mask = env->GetLongArrayElements(buf_mask, JNI_FALSE);
-  int buf_idx = 0;
-  int field_idx = 0;
-
   // get decompression compression_codec
   auto compression_codec = arrow::Compression::UNCOMPRESSED;
   auto codec_l = env->GetStringUTFChars(codec_jstr, JNI_FALSE);
@@ -1284,64 +1278,48 @@ Java_com_intel_sparkColumnarPlugin_vectorized_ShuffleDecompressionJniWrapper_dec
   }
   env->ReleaseStringUTFChars(codec_jstr, codec_l);
 
+  // make buffers from raws
+  auto in_buf_addrs = env->GetLongArrayElements(buf_addrs, JNI_FALSE);
+  auto in_buf_sizes = env->GetLongArrayElements(buf_sizes, JNI_FALSE);
+  auto in_buf_mask = env->GetLongArrayElements(buf_mask, JNI_FALSE);
+
   std::vector<std::shared_ptr<arrow::ArrayData>> arrays;
-  while (field_idx < schema->num_fields()) {
-    auto field = schema->field(field_idx);
-    std::vector<std::shared_ptr<arrow::Buffer>> buffers;
+  std::vector<std::shared_ptr<arrow::Buffer>> buffers;
 
-    // decompress validity buffer
-    auto result = arrow::BitUtil::GetBit((uint8_t*)in_buf_mask, buf_idx)
-                      ? DecompressBuffer(in_buf_addrs[buf_idx], in_buf_sizes[buf_idx],
-                                         arrow::Compression::UNCOMPRESSED)
-                      : DecompressBuffer(in_buf_addrs[buf_idx], in_buf_sizes[buf_idx],
-                                         compression_codec);
-    if (result.ok()) {
-      buffers.push_back(std::move(result).ValueOrDie());
-    } else {
-      env->ThrowNew(
-          io_exception_class,
-          std::string("failed to decompress validity buffer, error message is " +
-                      result.status().message())
-              .c_str());
-    }
+  buffers.reserve(in_bufs_len);
+  for (auto i = 0; i < in_bufs_len; ++i) {
+    buffers.push_back(std::make_shared<arrow::Buffer>(
+        reinterpret_cast<const uint8_t *>(in_buf_addrs[i]), in_buf_sizes[i]));
+  }
 
-    // decompress value buffer
-    result = DecompressBuffer(in_buf_addrs[buf_idx + 1], in_buf_sizes[buf_idx + 1],
-                              compression_codec);
-    if (result.ok()) {
-      buffers.push_back(std::move(result).ValueOrDie());
-    } else {
-      env->ThrowNew(io_exception_class,
-                    std::string("failed to decompress value buffer, error message is " +
-                                result.status().message())
-                        .c_str());
-    }
-
-    if (arrow::is_binary_like(field->type()->id())) {
-      // decompress offset buffer
-      result = DecompressBuffer(in_buf_addrs[buf_idx + 2], in_buf_sizes[buf_idx + 2],
-                                compression_codec);
-      if (result.ok()) {
-        buffers.push_back(std::move(result).ValueOrDie());
-      } else {
-        env->ThrowNew(
-            io_exception_class,
-            std::string("failed to decompress offset buffer, error message is " +
-                        result.status().message())
-                .c_str());
-      }
-      buf_idx += 3;
-    } else {
-      buf_idx += 2;
-    }
-    arrays.push_back(arrow::ArrayData::Make(field->type(), num_rows, std::move(buffers)));
-
-    ++field_idx;
+  // decompress buffers
+  auto options = arrow::ipc::IpcReadOptions::Defaults();
+  auto status = DecompressBuffers(compression_codec, options, (uint8_t*)in_buf_mask, buffers);
+  if (!status.ok()) {
+    env->ThrowNew(io_exception_class,
+                  std::string("failed to decompress buffers, error message is " +
+                              status.message())
+                      .c_str());
   }
 
   env->ReleaseLongArrayElements(buf_addrs, in_buf_addrs, JNI_ABORT);
   env->ReleaseLongArrayElements(buf_sizes, in_buf_sizes, JNI_ABORT);
   env->ReleaseLongArrayElements(buf_mask, in_buf_mask, JNI_ABORT);
+
+  // make arrays from buffers
+  int buffer_idx = 0;
+  auto num_fields = schema->num_fields();
+  for (auto field_idx = 0; field_idx < num_fields; ++field_idx) {
+    auto field = schema->field(field_idx);
+    auto num_buf = arrow::is_base_binary_like(field->type()->id()) ? 3 : 2;
+
+    std::vector<std::shared_ptr<arrow::Buffer>> bufs;
+    bufs.reserve(num_buf);
+    for (auto i = 0; i < num_buf; ++i, ++buffer_idx) {
+      bufs.push_back(std::move(buffers[buffer_idx]));
+    }
+    arrays.push_back(arrow::ArrayData::Make(field->type(), num_rows, std::move(bufs)));
+  }
 
   return MakeRecordBatchBuilder(
       env, schema, arrow::RecordBatch::Make(schema, num_rows, std::move(arrays)));
