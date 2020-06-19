@@ -359,7 +359,7 @@ class ConditionedShuffleArrayListKernel::Impl {
     out.close();
 
     // compile the code
-    std::string cmd = "gcc -Wall -Wextra " + cppfile + " -o " + tmplibfile +
+    std::string cmd = "/home/sparkuser/miniconda3/envs/intel-arrow-dev/bin/gcc -Wall -Wextra " + cppfile + " -o " + tmplibfile +
                       " -O3 -shared -fPIC -lspark_columnar_jni > " + logfile;
     int ret = system(cmd.c_str());
     if (WEXITSTATUS(ret) != EXIT_SUCCESS) {

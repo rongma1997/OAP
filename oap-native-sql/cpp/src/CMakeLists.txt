@@ -133,12 +133,16 @@ endif()
 
 if(BENCHMARKS)
   find_package(GTest)
+  find_library(ARROW_TESTING_LIB arrow_testing)
+  if(NOT ARROW_TESTING_LIB)
+	message(FATAL_ERROR "Arrow library not found")
+  endif()
   #add_definitions(-DBENCHMARK_FILE_PATH=${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/source_files/)
   add_compile_definitions(BENCHMARK_FILE_PATH="file://${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/source_files/")
 macro(package_add_benchmark TESTNAME)
   #configure_file(${ARGN}.in ${ARGN})
   add_executable(${TESTNAME} ${ARGN})
-  target_link_libraries(${TESTNAME} gtest gmock gtest_main spark_columnar_jni parquet ${CMAKE_THREAD_LIBS_INIT})
+  target_link_libraries(${TESTNAME} gtest gmock gtest_main spark_columnar_jni parquet ${ARROW_TESTING_LIB} ${CMAKE_THREAD_LIBS_INIT})
   target_include_directories(${TESTNAME} PUBLIC ${source_root_directory})
   gtest_discover_tests(${TESTNAME}
     WORKING_DIRECTORY ${PROJECT_DIR}

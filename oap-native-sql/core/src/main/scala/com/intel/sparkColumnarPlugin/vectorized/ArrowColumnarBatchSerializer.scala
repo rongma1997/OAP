@@ -91,12 +91,14 @@ private class ArrowColumnarBatchSerializerInstance(readBatchNumRows: SQLMetric)
 
       @throws(classOf[EOFException])
       override def readValue[T: ClassTag](): T = {
+
         if (reader != null && batchLoaded) {
           root.clear()
           if (cb != null) {
             cb.close()
             cb = null
           }
+
 
           try {
             batchLoaded = reader.loadNextBatch()
@@ -108,7 +110,12 @@ private class ArrowColumnarBatchSerializerInstance(readBatchNumRows: SQLMetric)
           }
           if (batchLoaded) {
             val numRows = root.getRowCount
-            logDebug(s"Read ColumnarBatch of ${numRows} rows")
+          //  logDebug(s"Read ColumnarBatch of ${numRows} rows")
+            val tc = org.apache.spark.TaskContext.get
+              logInfo("xgbtck " + tc.taskAttemptId() + " reducer_start " + System.currentTimeMillis()
+                + " stageid " + tc.stageId
+                + " threadid " + Thread.currentThread.getId
+                + " rownum " + numRows)
 
             numBatchesTotal += 1
             numRowsTotal += numRows
@@ -129,6 +136,9 @@ private class ArrowColumnarBatchSerializerInstance(readBatchNumRows: SQLMetric)
               .toArray[ColumnVector]
 
             cb = new ColumnarBatch(vectors, numRows)
+
+            logInfo("xgbtck " + tc.taskAttemptId() + " reducer_end " + System.currentTimeMillis())
+
             cb.asInstanceOf[T]
           } else {
             this.close()

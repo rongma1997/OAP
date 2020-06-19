@@ -602,7 +602,10 @@ extern "C" void MakeConditioner(std::shared_ptr<ConditionerBase> *out) {
     out.close();
 
     // compile the code
-    std::string cmd = "gcc -std=c++11 -Wall -Wextra " + cppfile + " -o " + libfile +
+	std::string arrow_header = " -I/home/sparkuser/miniconda3/envs/intel-arrow-dev/include ";
+	std::string arrow_lib = " -L/home/sparkuser/miniconda3/envs/intel-arrow-dev/lib ";
+
+    std::string cmd = "/home/sparkuser/miniconda3/envs/intel-arrow-dev/bin/gcc -std=c++11 -Wall -Wextra " + arrow_header + arrow_lib + cppfile + " -o " + libfile +
                       " -O3 -shared -fPIC -larrow 2> " + logfile;
     int ret = system(cmd.c_str());
     if (WEXITSTATUS(ret) != EXIT_SUCCESS) {
