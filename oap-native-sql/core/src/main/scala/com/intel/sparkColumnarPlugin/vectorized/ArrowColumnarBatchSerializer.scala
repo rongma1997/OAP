@@ -77,7 +77,7 @@ private class ArrowColumnarBatchSerializerInstance(readBatchNumRows: SQLMetric)
 
       private var numBatchesTotal: Long = _
       private var numRowsTotal: Long = _
-
+      private val utils: UtilsJniWrapper = new UtilsJniWrapper()
       override def asIterator: Iterator[Any] = {
         // This method is never called by shuffle code.
         throw new UnsupportedOperationException
@@ -91,6 +91,7 @@ private class ArrowColumnarBatchSerializerInstance(readBatchNumRows: SQLMetric)
 
       @throws(classOf[EOFException])
       override def readValue[T: ClassTag](): T = {
+        var starttime: Long = 0
 
         if (reader != null && batchLoaded) {
           root.clear()
@@ -101,6 +102,7 @@ private class ArrowColumnarBatchSerializerInstance(readBatchNumRows: SQLMetric)
 
 
           try {
+            starttime = utils.getTime()
             batchLoaded = reader.loadNextBatch()
           } catch {
             case ioe: IOException =>
@@ -110,12 +112,6 @@ private class ArrowColumnarBatchSerializerInstance(readBatchNumRows: SQLMetric)
           }
           if (batchLoaded) {
             val numRows = root.getRowCount
-          //  logDebug(s"Read ColumnarBatch of ${numRows} rows")
-            val tc = org.apache.spark.TaskContext.get
-              logInfo("xgbtck " + tc.taskAttemptId() + " reducer_start " + System.currentTimeMillis()
-                + " stageid " + tc.stageId
-                + " threadid " + Thread.currentThread.getId
-                + " rownum " + numRows)
 
             numBatchesTotal += 1
             numRowsTotal += numRows
@@ -137,7 +133,12 @@ private class ArrowColumnarBatchSerializerInstance(readBatchNumRows: SQLMetric)
 
             cb = new ColumnarBatch(vectors, numRows)
 
-            logInfo("xgbtck " + tc.taskAttemptId() + " reducer_end " + System.currentTimeMillis())
+            val tc = org.apache.spark.TaskContext.get
+              logInfo("xgbtck " + tc.taskAttemptId() + " reducer_decode " + starttime
+                + " " + (utils.getTime()-starttime)  //ts
+                + " " + tc.stageId                 //stageid
+                + " " + Thread.currentThread.getId //threadid
+                + " " + numRows)                   //rowcnt
 
             cb.asInstanceOf[T]
           } else {

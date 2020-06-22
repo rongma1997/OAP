@@ -25,6 +25,7 @@
 #include <arrow/record_batch.h>
 #include <arrow/util/compression.h>
 #include <jni.h>
+#include <time.h>
 #include <iostream>
 #include <string>
 #include "data_source/parquet/adapter.h"
@@ -1352,6 +1353,15 @@ Java_com_intel_sparkColumnarPlugin_vectorized_ShuffleDecompressionJniWrapper_clo
     JNIEnv* env, jobject, jlong schema_holder_id) {
   decompression_schema_holder_.Erase(schema_holder_id);
 }
+
+JNIEXPORT jlong JNICALL
+Java_com_intel_sparkColumnarPlugin_vectorized_UtilsJniWrapper_getTime(JNIEnv* env, jclass cls) {
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    unsigned long long rst=ts.tv_sec*1000000 + ts.tv_nsec/1000;
+    return rst;
+}
+
 
 #ifdef __cplusplus
 }
