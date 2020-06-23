@@ -116,6 +116,7 @@ arrow::Status PartitionWriter::WriteArrowRecordBatch() {
     auto options = arrow::ipc::IpcWriteOptions::Defaults();
     options.allow_64bit = true;
     options.compression = compression_codec_;
+    options.use_threads = false;
 
     auto res = arrow::ipc::NewStreamWriter(file_.get(), schema_, options);
     RETURN_NOT_OK(res.status());
