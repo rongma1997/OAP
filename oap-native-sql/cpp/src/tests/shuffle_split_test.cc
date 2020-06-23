@@ -31,7 +31,7 @@ namespace shuffle {
 
 class SplitterTest : public ::testing::Test {
  protected:
-  void SetUp() {
+  void SetUp() override {
     auto f_na = field("f_na", arrow::null());
     auto f_int8_a = field("f_int8_a", arrow::int8());
     auto f_int8_b = field("f_int8_b", arrow::int8());
@@ -50,6 +50,16 @@ class SplitterTest : public ::testing::Test {
     setenv("NATIVESQL_SPARK_LOCAL_DIRS", config_dirs.c_str(), 1);
 
     schema_ = arrow::schema({f_na, f_int8_a, f_int8_b, f_uint64, f_bool, f_string});
+  }
+
+
+  void TearDown() override {
+    auto& file_infos = splitter_->GetPartitionFileInfo();
+    std::vector<std::string> file_names;
+    for (const auto& file_info: file_infos) {
+      arrow::internal::DeleteFile(
+          *arrow::internal::PlatformFilename::FromString(file_info.second));
+    }
   }
 
   static const std::string tmp_dir_prefix;
