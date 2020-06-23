@@ -32,39 +32,40 @@ import java.io.InputStream;
 import java.util.*;
 
 /**
- * This class reads from an input stream containing compressed buffers and produces ArrowRecordBatches.
+ * This class reads from an input stream containing compressed buffers and produces
+ * ArrowRecordBatches.
  */
 public class ArrowCompressedStreamReader extends ArrowStreamReader {
 
-    public ArrowCompressedStreamReader(InputStream in, BufferAllocator allocator) {
-        super(in, allocator);
+  public ArrowCompressedStreamReader(InputStream in, BufferAllocator allocator) {
+    super(in, allocator);
+  }
+
+  protected void initialize() throws IOException {
+    Schema originalSchema = readSchema();
+    List<Field> fields = new ArrayList<>();
+    List<FieldVector> vectors = new ArrayList<>();
+    Map<Long, Dictionary> dictionaries = new HashMap<>();
+
+    // Convert fields with dictionaries to have the index type
+    for (Field field : originalSchema.getFields()) {
+      Field updated = DictionaryUtility.toMemoryFormat(field, allocator, dictionaries);
+      fields.add(updated);
+      vectors.add(updated.createVector(allocator));
     }
+    Schema schema = new Schema(fields, originalSchema.getCustomMetadata());
 
-    protected void initialize() throws IOException {
-        Schema originalSchema = readSchema();
-        List<Field> fields = new ArrayList<>();
-        List<FieldVector> vectors = new ArrayList<>();
-        Map<Long, Dictionary> dictionaries = new HashMap<>();
+    this.root = new VectorSchemaRoot(schema, vectors, 0);
+    this.loader = new CompressedVectorLoader(root);
+    this.dictionaries = Collections.unmodifiableMap(dictionaries);
+  }
 
-        // Convert fields with dictionaries to have the index type
-        for (Field field : originalSchema.getFields()) {
-            Field updated = DictionaryUtility.toMemoryFormat(field, allocator, dictionaries);
-            fields.add(updated);
-            vectors.add(updated.createVector(allocator));
-        }
-        Schema schema = new Schema(fields, originalSchema.getCustomMetadata());
-
-        this.root = new VectorSchemaRoot(schema, vectors, 0);
-        this.loader = new CompressedVectorLoader(root);
-        this.dictionaries = Collections.unmodifiableMap(dictionaries);
+  @Override
+  protected void loadRecordBatch(ArrowRecordBatch batch) {
+    try {
+      ((CompressedVectorLoader) loader).loadCompressed(batch);
+    } finally {
+      batch.close();
     }
-
-    @Override
-    protected void loadRecordBatch(ArrowRecordBatch batch) {
-        try {
-            ((CompressedVectorLoader)loader).loadCompressed(batch);
-        } finally {
-            batch.close();
-        }
-    }
+  }
 }

@@ -29,8 +29,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * A simple reference manager implementation for memory allocated by native
- * code. The underlying memory will be released when reference count reach zero.
+ * A simple reference manager implementation for memory allocated by native code. The underlying
+ * memory will be released when reference count reach zero.
  */
 public class AdaptorReferenceManager implements ReferenceManager {
   private native void nativeRelease(long nativeMemoryHolder);
@@ -62,7 +62,8 @@ public class AdaptorReferenceManager implements ReferenceManager {
 
   @Override
   public boolean release(int decrement) {
-    Preconditions.checkState(decrement >= 1, "ref count decrement should be greater than or equal to 1");
+    Preconditions.checkState(
+        decrement >= 1, "ref count decrement should be greater than or equal to 1");
     // decrement the ref count
     final int refCnt;
     synchronized (this) {
@@ -106,7 +107,8 @@ public class AdaptorReferenceManager implements ReferenceManager {
   }
 
   @Override
-  public OwnershipTransferResult transferOwnership(ArrowBuf sourceBuffer, BufferAllocator targetAllocator) {
+  public OwnershipTransferResult transferOwnership(
+      ArrowBuf sourceBuffer, BufferAllocator targetAllocator) {
     return NO_OP.transferOwnership(sourceBuffer, targetAllocator);
   }
 

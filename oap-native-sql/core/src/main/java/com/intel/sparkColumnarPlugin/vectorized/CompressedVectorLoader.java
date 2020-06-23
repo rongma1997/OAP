@@ -28,36 +28,36 @@ import org.apache.arrow.vector.ipc.message.ArrowRecordBatch;
 
 import io.netty.buffer.ArrowBuf;
 
-/**
- * Loads compressed buffers into vectors.
- */
+/** Loads compressed buffers into vectors. */
 public class CompressedVectorLoader extends VectorLoader {
 
-    /**
-     * Construct with a root to load and will create children in root based on schema.
-     *
-     * @param root the root to add vectors to based on schema
-     */
-    public CompressedVectorLoader(VectorSchemaRoot root) {
-        super(root);
-    }
+  /**
+   * Construct with a root to load and will create children in root based on schema.
+   *
+   * @param root the root to add vectors to based on schema
+   */
+  public CompressedVectorLoader(VectorSchemaRoot root) {
+    super(root);
+  }
 
-    /**
-     * Loads the record batch in the vectors.
-     * will not close the record batch
-     *
-     * @param recordBatch the batch to load
-     */
-    public void loadCompressed(ArrowRecordBatch recordBatch) {
-        Iterator<ArrowBuf> buffers = recordBatch.getBuffers().iterator();
-        Iterator<ArrowFieldNode> nodes = recordBatch.getNodes().iterator();
-        for (FieldVector fieldVector : root.getFieldVectors()) {
-            loadBuffers(fieldVector, fieldVector.getField(), buffers, nodes);
-        }
-        root.setRootRowCount(recordBatch.getLength());
-        if (nodes.hasNext() || buffers.hasNext()) {
-            throw new IllegalArgumentException("not all nodes and buffers were consumed. nodes: " +
-                    Collections2.toList(nodes).toString() + " buffers: " + Collections2.toList(buffers).toString());
-        }
+  /**
+   * Loads the record batch in the vectors. will not close the record batch
+   *
+   * @param recordBatch the batch to load
+   */
+  public void loadCompressed(ArrowRecordBatch recordBatch) {
+    Iterator<ArrowBuf> buffers = recordBatch.getBuffers().iterator();
+    Iterator<ArrowFieldNode> nodes = recordBatch.getNodes().iterator();
+    for (FieldVector fieldVector : root.getFieldVectors()) {
+      loadBuffers(fieldVector, fieldVector.getField(), buffers, nodes);
     }
+    root.setRootRowCount(recordBatch.getLength());
+    if (nodes.hasNext() || buffers.hasNext()) {
+      throw new IllegalArgumentException(
+          "not all nodes and buffers were consumed. nodes: "
+              + Collections2.toList(nodes).toString()
+              + " buffers: "
+              + Collections2.toList(buffers).toString());
+    }
+  }
 }
