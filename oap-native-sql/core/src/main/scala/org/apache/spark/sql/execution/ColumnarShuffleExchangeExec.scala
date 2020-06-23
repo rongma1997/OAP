@@ -50,7 +50,6 @@ import org.apache.spark.sql.execution.metric.{
 }
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
-import org.apache.spark.sql.util.ArrowUtils
 import org.apache.spark.sql.vectorized.ColumnarBatch
 import org.apache.spark.util.MutablePair
 
@@ -67,8 +66,8 @@ class ColumnarShuffleExchangeExec(
   override private[sql] lazy val readMetrics =
     SQLShuffleReadMetricsReporter.createShuffleReadMetrics(sparkContext)
   override lazy val metrics: Map[String, SQLMetric] = Map(
-    "dataSize" -> SQLMetrics
-      .createSizeMetric(sparkContext, "data size"),
+    "dataSize" -> SQLMetrics.createSizeMetric(sparkContext, "data size"),
+    "splitTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "split time"),
     "avgReadBatchNumRows" -> SQLMetrics
       .createAverageMetric(sparkContext, "avg read batch num rows")) ++ readMetrics ++ writeMetrics
 
@@ -89,7 +88,8 @@ class ColumnarShuffleExchangeExec(
       outputPartitioning,
       serializer,
       writeMetrics,
-      longMetric("dataSize"))
+      longMetric("dataSize"),
+      longMetric("splitTime"))
   }
 
   def createColumnarShuffledRDD(
@@ -109,16 +109,14 @@ class ColumnarShuffleExchangeExec(
 
 object ColumnarShuffleExchangeExec extends Logging {
 
-  private def fromAttributes(attributes: Seq[Attribute]): StructType =
-    StructType(attributes.map(a => StructField(a.name, a.dataType, a.nullable, a.metadata)))
-
   def prepareShuffleDependency(
       rdd: RDD[ColumnarBatch],
       outputAttributes: Seq[Attribute],
       newPartitioning: Partitioning,
       serializer: Serializer,
       writeMetrics: Map[String, SQLMetric],
-      dataSize: SQLMetric): ShuffleDependency[Int, ColumnarBatch, ColumnarBatch] = {
+      dataSize: SQLMetric,
+      splitTime: SQLMetric): ShuffleDependency[Int, ColumnarBatch, ColumnarBatch] = {
 
     val arrowSchema: Schema =
       ConverterUtils.toArrowSchema(
@@ -238,7 +236,8 @@ object ColumnarShuffleExchangeExec extends Logging {
         serializer,
         shuffleWriterProcessor = createShuffleWriteProcessor(writeMetrics),
         serializedSchema = arrowSchema.toByteArray,
-        dataSize = dataSize)
+        dataSize = dataSize,
+        splitTime = splitTime)
 
     dependency
   }

@@ -45,8 +45,8 @@ case class CoalesceBatchesExec(child: SparkPlan) extends UnaryExecNode {
     "numInputRows" -> SQLMetrics.createMetric(sparkContext, "number of input rows"),
     "numInputBatches" -> SQLMetrics.createMetric(sparkContext, "number of input batches"),
     "numOutputBatches" -> SQLMetrics.createMetric(sparkContext, "number of output batches"),
-    "concatTime" -> SQLMetrics.createTimingMetric(sparkContext, "concat batch time total"),
-    "collectTime" -> SQLMetrics.createTimingMetric(sparkContext, "collect batch time total"),
+    "concatTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "concat batch time total"),
+    "collectTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "collect batch time total"),
     "avgCoalescedNumRows" -> SQLMetrics
       .createAverageMetric(sparkContext, "avg coalesced batch num rows"))
   // TODO: peak device memory total
@@ -105,12 +105,12 @@ case class CoalesceBatchesExec(child: SparkPlan) extends UnaryExecNode {
             }
 
             val beforeConcat = System.nanoTime
-            collectTime += TimeUnit.NANOSECONDS.toMillis(beforeConcat - beforeCollect)
+            collectTime += beforeConcat - beforeCollect
 
             coalesce(target, batchesToAppend.toList)
             target.setNumRows(rowCount)
 
-            concatTime += TimeUnit.NANOSECONDS.toMillis(System.nanoTime - beforeConcat)
+            concatTime += System.nanoTime - beforeConcat
             numInputRows += rowCount
             numInputBatches += (1 + batchesToAppend.length)
             numOutputBatches += 1
