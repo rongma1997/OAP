@@ -17,25 +17,19 @@
 
 package com.intel.sparkColumnarPlugin.expression
 
-import java.util.concurrent.atomic.AtomicLong
-
-import io.netty.buffer.ArrowBuf
 import com.intel.sparkColumnarPlugin.vectorized.ArrowWritableColumnVector
+import io.netty.buffer.ArrowBuf
+import org.apache.arrow.vector._
+import org.apache.arrow.vector.ipc.message.{ArrowFieldNode, ArrowRecordBatch}
+import org.apache.arrow.vector.types.pojo.Schema
+import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate._
 import org.apache.spark.sql.catalyst.optimizer._
-import org.apache.spark.sql.util.ArrowUtils
-import org.apache.spark.sql.types._
-import org.apache.spark.sql.vectorized.{ColumnVector, ColumnarBatch}
-import org.apache.arrow.vector._
-import org.apache.arrow.vector.ipc.message.ArrowFieldNode
-import org.apache.arrow.vector.ipc.message.ArrowRecordBatch
-import org.apache.arrow.vector.types.pojo.Schema
-import org.apache.arrow.vector.types.pojo.Field
-import org.apache.arrow.vector.types.pojo.ArrowType
-import org.apache.spark.internal.Logging
-import org.apache.spark.sql.execution.ColumnarShuffleExchangeExec.fromAttributes
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.types._
+import org.apache.spark.sql.util.ArrowUtils
+import org.apache.spark.sql.vectorized.ColumnarBatch
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ListBuffer
