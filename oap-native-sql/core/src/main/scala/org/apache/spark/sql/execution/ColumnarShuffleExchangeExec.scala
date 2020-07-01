@@ -92,16 +92,11 @@ class ColumnarShuffleExchangeExec(
       longMetric("splitTime"))
   }
 
-  def createColumnarShuffledRDD(
-      partitionStartIndices: Option[Array[Int]]): ShuffledColumnarBatchRDD = {
-    new ShuffledColumnarBatchRDD(columnarShuffleDependency, readMetrics, partitionStartIndices)
-  }
-
   private var cachedShuffleRDD: ShuffledColumnarBatchRDD = _
 
   override def doExecuteColumnar(): RDD[ColumnarBatch] = {
     if (cachedShuffleRDD == null) {
-      cachedShuffleRDD = createColumnarShuffledRDD(None)
+      cachedShuffleRDD = new ShuffledColumnarBatchRDD(columnarShuffleDependency, readMetrics)
     }
     cachedShuffleRDD
   }
