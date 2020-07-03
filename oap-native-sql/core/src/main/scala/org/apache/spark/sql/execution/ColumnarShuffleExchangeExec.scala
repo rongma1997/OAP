@@ -18,6 +18,7 @@
 package org.apache.spark.sql.execution
 
 import java.util.Random
+import java.util.concurrent.ConcurrentHashMap
 
 import com.intel.oap.expression.ConverterUtils
 import com.intel.oap.vectorized.{
@@ -54,6 +55,8 @@ import org.apache.spark.sql.vectorized.ColumnarBatch
 import org.apache.spark.util.MutablePair
 
 import scala.collection.JavaConverters._
+import scala.collection.mutable
+import scala.concurrent.Future
 
 class ColumnarShuffleExchangeExec(
     override val outputPartitioning: Partitioning,
@@ -75,10 +78,19 @@ class ColumnarShuffleExchangeExec(
 
   override def supportsColumnar: Boolean = true
 
-  @transient lazy val inputColumnarRDD: RDD[ColumnarBatch] = child.executeColumnar()
-
   private val serializer: Serializer = new ArrowColumnarBatchSerializer(
     longMetric("avgReadBatchNumRows"))
+
+  @transient lazy val inputColumnarRDD: RDD[ColumnarBatch] = child.executeColumnar()
+
+  // 'mapOutputStatisticsFuture' is only needed when enable AQE.
+  @transient override lazy val mapOutputStatisticsFuture: Future[MapOutputStatistics] = {
+    if (inputColumnarRDD.getNumPartitions == 0) {
+      Future.successful(null)
+    } else {
+      sparkContext.submitMapStage(columnarShuffleDependency)
+    }
+  }
 
   @transient
   lazy val columnarShuffleDependency: ShuffleDependency[Int, ColumnarBatch, ColumnarBatch] = {
@@ -103,6 +115,8 @@ class ColumnarShuffleExchangeExec(
 }
 
 object ColumnarShuffleExchangeExec extends Logging {
+
+  val exchanges = new ConcurrentHashMap[ShuffleExchangeExec, ColumnarShuffleExchangeExec]()
 
   def prepareShuffleDependency(
       rdd: RDD[ColumnarBatch],

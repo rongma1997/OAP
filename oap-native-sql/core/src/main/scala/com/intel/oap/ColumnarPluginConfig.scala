@@ -31,6 +31,7 @@ class ColumnarPluginConfig(conf: SparkConf) {
     conf.getInt("spark.sql.execution.arrow.maxRecordsPerBatch", defaultValue = 10000)
   val tmpFile: String =
     conf.getOption("spark.sql.columnar.tmp_dir").getOrElse(null)
+  val enableAQE: Boolean = conf.getBoolean("spark.sql.adaptive.enabled", false)
 }
 
 object ColumnarPluginConfig {
