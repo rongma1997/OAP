@@ -21,26 +21,14 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
 import org.apache.spark.sql.catalyst.plans.physical.{Partitioning, UnknownPartitioning}
-import org.apache.spark.sql.execution.{
-  CoalescedPartitionSpec,
-  ColumnarShuffleExchangeExec,
-  PartialMapperPartitionSpec,
-  PartialReducerPartitionSpec,
-  ShufflePartitionSpec,
-  ShuffledColumnarBatchRDD,
-  ShuffledRowRDD,
-  SparkPlan,
-  UnaryExecNode
-}
-import org.apache.spark.sql.execution.adaptive.{CustomShuffleReaderExec, ShuffleQueryStageExec}
 import org.apache.spark.sql.execution.exchange.{ReusedExchangeExec, ShuffleExchangeExec}
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
+import org.apache.spark.sql.execution._
 import org.apache.spark.sql.vectorized.ColumnarBatch
 
 case class ColumnarCustomShuffleReaderExec(
     child: SparkPlan,
-    partitionSpecs: Seq[ShufflePartitionSpec],
-    description: String)
+    partitionSpecs: Seq[ShufflePartitionSpec])
     extends UnaryExecNode {
   // If this reader is to read shuffle files locally, then all partition specs should be
   // `PartialMapperPartitionSpec`.
@@ -72,110 +60,112 @@ case class ColumnarCustomShuffleReaderExec(
     }
   }
 
-  override def stringArgs: Iterator[Any] = Iterator(description)
+//  override def stringArgs: Iterator[Any] = Iterator(description)
 
-//  override def stringArgs: Iterator[Any] = {
-//    val desc = if (isLocalReader) {
-//      "local"
-//    } else if (hasCoalescedPartition && hasSkewedPartition) {
-//      "coalesced and skewed"
-//    } else if (hasCoalescedPartition) {
-//      "coalesced"
-//    } else if (hasSkewedPartition) {
-//      "skewed"
-//    } else {
-//      ""
-//    }
-//    Iterator(desc)
-//  }
-//
-//  def hasCoalescedPartition: Boolean =
-//    partitionSpecs.exists(_.isInstanceOf[CoalescedPartitionSpec])
-//
-//  def hasSkewedPartition: Boolean =
-//    partitionSpecs.exists(_.isInstanceOf[PartialReducerPartitionSpec])
-//
-//  def isLocalReader: Boolean =
-//    partitionSpecs.exists(_.isInstanceOf[PartialMapperPartitionSpec])
-//
-//  private def shuffleStage = child match {
-//    case stage: ShuffleQueryStageExec => Some(stage)
-//    case _ => None
-//  }
-//
-//  private def partitionDataSizeMetrics = {
-//    val maxSize = SQLMetrics.createSizeMetric(sparkContext, "maximum partition data size")
-//    val minSize = SQLMetrics.createSizeMetric(sparkContext, "minimum partition data size")
-//    val avgSize = SQLMetrics.createSizeMetric(sparkContext, "average partition data size")
-//    val mapStats = shuffleStage.get.mapStats.bytesByPartitionId
-//    val sizes = partitionSpecs.map {
-//      case CoalescedPartitionSpec(startReducerIndex, endReducerIndex) =>
-//        startReducerIndex.until(endReducerIndex).map(mapStats(_)).sum
-//      case p: PartialReducerPartitionSpec => p.dataSize
-//      case p => throw new IllegalStateException("unexpected " + p)
-//    }
-//    maxSize.set(sizes.max)
-//    minSize.set(sizes.min)
-//    avgSize.set(sizes.sum / sizes.length)
-//    Map(
-//      "maxPartitionDataSize" -> maxSize,
-//      "minPartitionDataSize" -> minSize,
-//      "avgPartitionDataSize" -> avgSize)
-//  }
-//
-//  private def skewedPartitionMetrics = {
-//    val metrics = SQLMetrics.createMetric(sparkContext, "number of skewed partitions")
-//    val numSkewedPartitions = partitionSpecs
-//      .collect {
-//        case p: PartialReducerPartitionSpec => p.reducerIndex
-//      }
-//      .distinct
-//      .length
-//    metrics.set(numSkewedPartitions)
-//    Map("numSkewedPartitions" -> metrics)
-//  }
-//
-//  @transient override lazy val metrics: Map[String, SQLMetric] = {
-//    if (shuffleStage.isDefined) {
-//      val numPartitions = SQLMetrics.createMetric(sparkContext, "number of partitions")
-//      numPartitions.set(partitionSpecs.length)
-//      Map("numPartitions" -> numPartitions) ++ {
-//        if (isLocalReader) {
-//          // We split the mapper partition evenly when creating local shuffle reader, so no
-//          // data size info is available.
-//          Map.empty
-//        } else {
-//          partitionDataSizeMetrics
-//        }
-//      } ++ {
-//        if (hasSkewedPartition) {
-//          skewedPartitionMetrics
-//        } else {
-//          Map.empty
-//        }
-//      }
-//    } else {
-//      // It's a canonicalized plan, no need to report metrics.
-//      Map.empty
-//    }
-//  }
-//
-  private var cachedShuffleRDD: RDD[ColumnarBatch] = null
+  override def stringArgs: Iterator[Any] = {
+    val desc = if (isLocalReader) {
+      "local"
+    } else if (hasCoalescedPartition && hasSkewedPartition) {
+      "coalesced and skewed"
+    } else if (hasCoalescedPartition) {
+      "coalesced"
+    } else if (hasSkewedPartition) {
+      "skewed"
+    } else {
+      ""
+    }
+    Iterator(desc)
+  }
+
+  def hasCoalescedPartition: Boolean =
+    partitionSpecs.exists(_.isInstanceOf[CoalescedPartitionSpec])
+
+  def hasSkewedPartition: Boolean =
+    partitionSpecs.exists(_.isInstanceOf[PartialReducerPartitionSpec])
+
+  def isLocalReader: Boolean =
+    partitionSpecs.exists(_.isInstanceOf[PartialMapperPartitionSpec])
+
+  private def shuffleStage = child match {
+    case stage: ShuffleQueryStageExec => Some(stage)
+    case _ => None
+  }
+
+  private def partitionDataSizeMetrics = {
+    val maxSize = SQLMetrics.createSizeMetric(sparkContext, "maximum partition data size")
+    val minSize = SQLMetrics.createSizeMetric(sparkContext, "minimum partition data size")
+    val avgSize = SQLMetrics.createSizeMetric(sparkContext, "average partition data size")
+    val mapStats = shuffleStage.get.mapStats.bytesByPartitionId
+    val sizes = partitionSpecs.map {
+      case CoalescedPartitionSpec(startReducerIndex, endReducerIndex) =>
+        startReducerIndex.until(endReducerIndex).map(mapStats(_)).sum
+      case p: PartialReducerPartitionSpec => p.dataSize
+      case p => throw new IllegalStateException("unexpected " + p)
+    }
+    maxSize.set(sizes.max)
+    minSize.set(sizes.min)
+    avgSize.set(sizes.sum / sizes.length)
+    Map(
+      "maxPartitionDataSize" -> maxSize,
+      "minPartitionDataSize" -> minSize,
+      "avgPartitionDataSize" -> avgSize)
+  }
+
+  private def skewedPartitionMetrics = {
+    val metrics = SQLMetrics.createMetric(sparkContext, "number of skewed partitions")
+    val numSkewedPartitions = partitionSpecs
+      .collect {
+        case p: PartialReducerPartitionSpec => p.reducerIndex
+      }
+      .distinct
+      .length
+    metrics.set(numSkewedPartitions)
+    Map("numSkewedPartitions" -> metrics)
+  }
+
+  @transient override lazy val metrics: Map[String, SQLMetric] = {
+    if (shuffleStage.isDefined) {
+      val numPartitions = SQLMetrics.createMetric(sparkContext, "number of partitions")
+      numPartitions.set(partitionSpecs.length)
+      Map("numPartitions" -> numPartitions) ++ {
+        if (isLocalReader) {
+          // We split the mapper partition evenly when creating local shuffle reader, so no
+          // data size info is available.
+          Map.empty
+        } else {
+          partitionDataSizeMetrics
+        }
+      } ++ {
+        if (hasSkewedPartition) {
+          skewedPartitionMetrics
+        } else {
+          Map.empty
+        }
+      }
+    } else {
+      // It's a canonicalized plan, no need to report metrics.
+      Map.empty
+    }
+  }
+
+  private lazy val cachedShuffleRDD: RDD[ColumnarBatch] = {
+    val executionId = sparkContext.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)
+    SQLMetrics.postDriverMetricUpdates(sparkContext, executionId, metrics.values.toSeq)
+    shuffleStage
+      .map { stage =>
+        new ShuffledColumnarBatchRDD(
+          stage.shuffle.asInstanceOf[ColumnarShuffleExchangeExec].columnarShuffleDependency,
+          stage.shuffle.asInstanceOf[ColumnarShuffleExchangeExec].readMetrics,
+          partitionSpecs.toArray)
+      }
+      .getOrElse {
+        throw new IllegalStateException("operating on canonicalized plan")
+      }
+  }
 
   override def supportsColumnar: Boolean = true
 
   override protected def doExecuteColumnar(): RDD[ColumnarBatch] = {
-    if (cachedShuffleRDD == null) {
-      cachedShuffleRDD = child match {
-        case stage: ColumnarShuffleQueryStageExec =>
-          new ShuffledColumnarBatchRDD(
-            stage.shuffle.asInstanceOf[ColumnarShuffleExchangeExec].columnarShuffleDependency,
-            stage.shuffle.asInstanceOf[ColumnarShuffleExchangeExec].readMetrics,
-            partitionSpecs.toArray)
-        case _ =>
-          throw new IllegalStateException("operating on canonicalization plan")
-      }
-    }
     cachedShuffleRDD
   }
 

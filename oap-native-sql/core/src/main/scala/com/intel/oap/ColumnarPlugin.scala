@@ -25,7 +25,6 @@ import org.apache.spark.SparkConf
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.execution.adaptive.{
   ColumnarCustomShuffleReaderExec,
-  ColumnarShuffleQueryStageExec,
   CustomShuffleReaderExec,
   ShuffleQueryStageExec
 }
@@ -86,17 +85,8 @@ case class ColumnarPreOverrides(conf: SparkConf) extends Rule[SparkPlan] {
       }
     case plan: ShuffleExchangeExec =>
       if (columnarConf.enableColumnarShuffle) {
-        var child = replaceWithColumnarPlan(plan.child)
+        val child = replaceWithColumnarPlan(plan.child)
         logDebug(s"Columnar Processing for ${plan.getClass} is currently supported.")
-        child = child match {
-          case ColumnarToRowExec(grand) => grand
-          case WholeStageCodegenExec(grand) =>
-            grand match {
-              case ColumnarToRowExec(grandgrand) => grandgrand
-              case other => other
-            }
-          case other => other
-        }
         if (columnarConf.enableAQE) {
           val exchange =
             new ColumnarShuffleExchangeExec(
@@ -130,19 +120,10 @@ case class ColumnarPreOverrides(conf: SparkConf) extends Rule[SparkPlan] {
         left,
         right)
       res
-    case plan: ShuffleQueryStageExec =>
-      val child = replaceWithColumnarPlan(plan.plan)
-      child match {
-        case s: ShuffleExchangeExec => replaceWithColumnarPlan(s)
-        case other => other
-      }
-      logDebug(s"Columnar Processing for ${plan.getClass} is currently supported.")
-      new ColumnarShuffleQueryStageExec(plan.id, child)
-    case plan: CustomShuffleReaderExec =>
+    case plan: CustomShuffleReaderExec if columnarConf.enableColumnarShuffle =>
       val child = replaceWithColumnarPlan(plan.child)
       logDebug(s"Columnar Processing for ${plan.getClass} is currently supported.")
-//      ColumnarCustomShuffleReaderExec(child, plan.partitionSpecs, plan.description)
-      CoalesceBatchesExec(ColumnarCustomShuffleReaderExec(child, plan.partitionSpecs, "NOOP"))
+      CoalesceBatchesExec(ColumnarCustomShuffleReaderExec(child, plan.partitionSpecs))
 
     case p =>
       val children = p.children.map(replaceWithColumnarPlan)
@@ -161,13 +142,21 @@ case class ColumnarPostOverrides(conf: SparkConf) extends Rule[SparkPlan] {
     case plan: RowToColumnarExec =>
       val child = replaceWithColumnarPlan(plan.child)
       RowToArrowColumnarExec(child)
-    case plan: ColumnarShuffleQueryStageExec =>
-      val shuffle = plan.plan match {
+    case plan: ShuffleQueryStageExec if columnarConf.enableColumnarShuffle =>
+      val child = replaceWithColumnarPlan(plan.plan)
+      val shuffle = child match {
         case ReusedExchangeExec(id, s: ShuffleExchangeExec) =>
           ReusedExchangeExec(id, ColumnarShuffleExchangeExec.exchanges.get(s))
         case other => other
       }
-      new ColumnarShuffleQueryStageExec(plan.id, shuffle)
+      ShuffleQueryStageExec(plan.id, shuffle)
+    case ReusedExchangeExec(id, s: ShuffleExchangeExec)
+        if columnarConf.enableAQE && columnarConf.enableColumnarShuffle =>
+      ReusedExchangeExec(id, ColumnarShuffleExchangeExec.exchanges.get(s))
+    case ColumnarToRowExec(child: SparkPlan)
+        if columnarConf.enableAQE && columnarConf.enableColumnarShuffle && child
+          .isInstanceOf[ColumnarShuffleExchangeExec] =>
+      replaceWithColumnarPlan(child)
     case p =>
       val children = p.children.map(replaceWithColumnarPlan)
       p.withNewChildren(children)
