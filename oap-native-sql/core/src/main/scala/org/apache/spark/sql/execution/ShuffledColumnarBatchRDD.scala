@@ -83,7 +83,7 @@ class ShuffledColumnarBatchRDD(
           tracker.getPreferredLocationsForShuffle(dependency, reducerIndex)
         }
 
-      case PartialReducerPartitionSpec(_, startMapIndex, endMapIndex, _) =>
+      case PartialReducerPartitionSpec(_, startMapIndex, endMapIndex) =>
         tracker.getMapLocation(dependency, startMapIndex, endMapIndex)
 
       case PartialMapperPartitionSpec(mapIndex, _, _) =>
@@ -105,7 +105,7 @@ class ShuffledColumnarBatchRDD(
           context,
           sqlMetricsReporter)
 
-      case PartialReducerPartitionSpec(reducerIndex, startMapIndex, endMapIndex, _) =>
+      case PartialReducerPartitionSpec(reducerIndex, startMapIndex, endMapIndex) =>
         SparkEnv.get.shuffleManager.getReaderForRange(
           dependency.shuffleHandle,
           startMapIndex,

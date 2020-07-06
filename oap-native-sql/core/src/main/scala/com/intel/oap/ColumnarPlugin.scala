@@ -123,7 +123,7 @@ case class ColumnarPreOverrides(conf: SparkConf) extends Rule[SparkPlan] {
     case plan: CustomShuffleReaderExec if columnarConf.enableColumnarShuffle =>
       val child = replaceWithColumnarPlan(plan.child)
       logDebug(s"Columnar Processing for ${plan.getClass} is currently supported.")
-      CoalesceBatchesExec(ColumnarCustomShuffleReaderExec(child, plan.partitionSpecs))
+      CoalesceBatchesExec(ColumnarCustomShuffleReaderExec(child, plan.partitionSpecs, plan.description))
 
     case p =>
       val children = p.children.map(replaceWithColumnarPlan)
