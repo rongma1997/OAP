@@ -21,10 +21,7 @@ import java.util.Random
 import java.util.concurrent.ConcurrentHashMap
 
 import com.intel.oap.expression.ConverterUtils
-import com.intel.oap.vectorized.{
-  ArrowColumnarBatchSerializer,
-  ArrowWritableColumnVector
-}
+import com.intel.oap.vectorized.{ArrowColumnarBatchSerializer, ArrowWritableColumnVector}
 import org.apache.arrow.vector.types.pojo.Schema
 import org.apache.arrow.vector.{FieldVector, IntVector}
 import org.apache.spark._
@@ -50,12 +47,12 @@ import org.apache.spark.sql.execution.metric.{
   SQLShuffleWriteMetricsReporter
 }
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
+import org.apache.spark.sql.types.IntegerType
 import org.apache.spark.sql.vectorized.ColumnarBatch
 import org.apache.spark.util.MutablePair
+import org.mockito.Mockito._
 
 import scala.collection.JavaConverters._
-import scala.collection.mutable
 import scala.concurrent.Future
 
 class ColumnarShuffleExchangeExec(
@@ -111,6 +108,28 @@ class ColumnarShuffleExchangeExec(
       cachedShuffleRDD = new ShuffledColumnarBatchRDD(columnarShuffleDependency, readMetrics)
     }
     cachedShuffleRDD
+  }
+
+  /**
+   * A [[ShuffleDependency]] that will partition rows of its child based on
+   * the partitioning scheme defined in `newPartitioning`. Those partitions of
+   * the returned ShuffleDependency will be the input of shuffle.
+   */
+  @transient
+  override lazy val shuffleDependency: ShuffleDependency[Int, InternalRow, InternalRow] = {
+    val dep = mock(classOf[ShuffleDependency[Int, InternalRow, InternalRow]])
+
+    when(dep.shuffleId).thenReturn(columnarShuffleDependency.shuffleId)
+
+    val part = mock(classOf[Partitioner])
+    when(part.numPartitions).thenReturn(columnarShuffleDependency.partitioner.numPartitions)
+    when(dep.partitioner).thenReturn(part)
+
+    val rdd = mock(classOf[RDD[Product2[Int, InternalRow]]])
+    when(rdd.getNumPartitions).thenReturn(inputColumnarRDD.getNumPartitions)
+    when(dep.rdd).thenReturn(rdd)
+
+    dep
   }
 }
 
