@@ -93,7 +93,10 @@ case class ColumnarPreOverrides(conf: SparkConf) extends Rule[SparkPlan] {
               plan.outputPartitioning,
               child,
               plan.canChangeNumPartitions)
-          ColumnarShuffleExchangeExec.exchanges.put(plan, exchange)
+          if (ColumnarShuffleExchangeExec.exchanges.contains(plan)) {
+            logWarning(s"Found not reused ColumnarShuffleExchange " + exchange.treeString)
+          }
+          ColumnarShuffleExchangeExec.exchanges.update(plan, exchange)
           exchange
         } else {
           CoalesceBatchesExec(
@@ -142,17 +145,14 @@ case class ColumnarPostOverrides(conf: SparkConf) extends Rule[SparkPlan] {
     case plan: RowToColumnarExec =>
       val child = replaceWithColumnarPlan(plan.child)
       RowToArrowColumnarExec(child)
-    case plan: ShuffleQueryStageExec if columnarConf.enableColumnarShuffle =>
-      val child = replaceWithColumnarPlan(plan.plan)
-      val shuffle = child match {
-        case ReusedExchangeExec(id, s: ShuffleExchangeExec) =>
-          ReusedExchangeExec(id, ColumnarShuffleExchangeExec.exchanges.get(s))
-        case other => other
-      }
-      ShuffleQueryStageExec(plan.id, shuffle)
     case ReusedExchangeExec(id, s: ShuffleExchangeExec)
         if columnarConf.enableAQE && columnarConf.enableColumnarShuffle =>
-      ReusedExchangeExec(id, ColumnarShuffleExchangeExec.exchanges.get(s))
+      val exchange = ColumnarShuffleExchangeExec.exchanges.get(s) match {
+        case Some(e) => e
+        case None => throw new IllegalStateException("Reused exchange operator not found.")
+      }
+      ReusedExchangeExec(id, exchange)
+    // We need to discard c2r since ColumnarShuffleExchangeExec can't be the last operator with AQE enabled
     case ColumnarToRowExec(child: SparkPlan)
         if columnarConf.enableAQE && columnarConf.enableColumnarShuffle && child
           .isInstanceOf[ColumnarShuffleExchangeExec] =>
