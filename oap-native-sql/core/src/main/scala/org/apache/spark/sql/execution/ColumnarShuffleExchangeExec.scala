@@ -17,10 +17,11 @@
 
 package org.apache.spark.sql.execution
 
-import java.util.Random
-
 import com.intel.oap.expression.ConverterUtils
 import com.intel.oap.vectorized.{ArrowColumnarBatchSerializer, ArrowWritableColumnVector}
+
+import java.util.Random
+
 import org.apache.arrow.vector.types.pojo.Schema
 import org.apache.arrow.vector.{FieldVector, IntVector}
 import org.apache.spark._
@@ -30,12 +31,22 @@ import org.apache.spark.serializer.Serializer
 import org.apache.spark.shuffle.{ColumnarShuffleDependency, ShuffleHandle}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.codegen.LazilyGeneratedOrdering
-import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, BoundReference, UnsafeProjection}
+import org.apache.spark.sql.catalyst.expressions.{
+  Attribute,
+  AttributeReference,
+  BoundReference,
+  UnsafeProjection
+}
 import org.apache.spark.sql.catalyst.plans.physical._
 import org.apache.spark.sql.execution.CoalesceExec.EmptyPartition
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeExec
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeExec.createShuffleWriteProcessor
-import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics, SQLShuffleReadMetricsReporter, SQLShuffleWriteMetricsReporter}
+import org.apache.spark.sql.execution.metric.{
+  SQLMetric,
+  SQLMetrics,
+  SQLShuffleReadMetricsReporter,
+  SQLShuffleWriteMetricsReporter
+}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.IntegerType
 import org.apache.spark.sql.vectorized.ColumnarBatch

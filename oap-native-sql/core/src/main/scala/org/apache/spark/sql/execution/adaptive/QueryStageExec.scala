@@ -89,7 +89,8 @@ abstract class QueryStageExec extends LeafExecNode {
     val exchange = plan match {
       case r: ReusedExchangeExec => r.child
       case e: Exchange => e
-      case _ => throw new IllegalStateException("wrong plan for query stage:\n " + plan.treeString)
+      case _ =>
+        throw new IllegalStateException("wrong plan for query stage:\n " + plan.treeString)
     }
     Statistics(sizeInBytes = exchange.metrics("dataSize").value)
   }
@@ -122,7 +123,8 @@ abstract class QueryStageExec extends LeafExecNode {
       addSuffix: Boolean = false,
       maxFields: Int,
       printNodeId: Boolean): Unit = {
-    super.generateTreeString(depth,
+    super.generateTreeString(
+      depth,
       lastChildren,
       append,
       verbose,
@@ -131,16 +133,22 @@ abstract class QueryStageExec extends LeafExecNode {
       maxFields,
       printNodeId)
     plan.generateTreeString(
-      depth + 1, lastChildren :+ true, append, verbose, "", false, maxFields, printNodeId)
+      depth + 1,
+      lastChildren :+ true,
+      append,
+      verbose,
+      "",
+      false,
+      maxFields,
+      printNodeId)
   }
 }
 
 /**
  * A shuffle query stage whose child is a [[ShuffleExchangeExec]] or [[ReusedExchangeExec]].
  */
-case class ShuffleQueryStageExec(
-    override val id: Int,
-    override val plan: SparkPlan) extends QueryStageExec {
+case class ShuffleQueryStageExec(override val id: Int, override val plan: SparkPlan)
+    extends QueryStageExec {
 
   @transient val shuffle = plan match {
     case s: ShuffleExchangeExec => s
@@ -154,15 +162,13 @@ case class ShuffleQueryStageExec(
   }
 
   override def newReuseInstance(newStageId: Int, newOutput: Seq[Attribute]): QueryStageExec = {
-    ShuffleQueryStageExec(
-      newStageId,
-      ReusedExchangeExec(newOutput, shuffle))
+    ShuffleQueryStageExec(newStageId, ReusedExchangeExec(newOutput, shuffle))
   }
 
   override def cancel(): Unit = {
     shuffle.mapOutputStatisticsFuture match {
       case action: FutureAction[MapOutputStatistics]
-        if !shuffle.mapOutputStatisticsFuture.isCompleted =>
+          if !shuffle.mapOutputStatisticsFuture.isCompleted =>
         action.cancel()
       case _ =>
     }
@@ -186,9 +192,8 @@ case class ShuffleQueryStageExec(
 /**
  * A broadcast query stage whose child is a [[BroadcastExchangeExec]] or [[ReusedExchangeExec]].
  */
-case class BroadcastQueryStageExec(
-    override val id: Int,
-    override val plan: SparkPlan) extends QueryStageExec {
+case class BroadcastQueryStageExec(override val id: Int, override val plan: SparkPlan)
+    extends QueryStageExec {
 
   @transient val broadcast = plan match {
     case b: BroadcastExchangeExec => b
@@ -201,16 +206,19 @@ case class BroadcastQueryStageExec(
     val broadcastFuture = broadcast.completionFuture
     val timeout = SQLConf.get.broadcastTimeout
     val promise = Promise[Any]()
-    val fail = BroadcastQueryStageExec.scheduledExecutor.schedule(new Runnable() {
-      override def run(): Unit = {
-        promise.tryFailure(new SparkException(s"Could not execute broadcast in $timeout secs. " +
-          s"You can increase the timeout for broadcasts via ${SQLConf.BROADCAST_TIMEOUT.key} or " +
-          s"disable broadcast join by setting ${SQLConf.AUTO_BROADCASTJOIN_THRESHOLD.key} to -1"))
-      }
-    }, timeout, TimeUnit.SECONDS)
+    val fail = BroadcastQueryStageExec.scheduledExecutor.schedule(
+      new Runnable() {
+        override def run(): Unit = {
+          promise.tryFailure(new SparkException(s"Could not execute broadcast in $timeout secs. " +
+            s"You can increase the timeout for broadcasts via ${SQLConf.BROADCAST_TIMEOUT.key} or " +
+            s"disable broadcast join by setting ${SQLConf.AUTO_BROADCASTJOIN_THRESHOLD.key} to -1"))
+        }
+      },
+      timeout,
+      TimeUnit.SECONDS)
     broadcastFuture.onComplete(_ => fail.cancel(false))(AdaptiveSparkPlanExec.executionContext)
-    Future.firstCompletedOf(
-      Seq(broadcastFuture, promise.future))(AdaptiveSparkPlanExec.executionContext)
+    Future.firstCompletedOf(Seq(broadcastFuture, promise.future))(
+      AdaptiveSparkPlanExec.executionContext)
   }
 
   override def doMaterialize(): Future[Any] = {
@@ -218,9 +226,7 @@ case class BroadcastQueryStageExec(
   }
 
   override def newReuseInstance(newStageId: Int, newOutput: Seq[Attribute]): QueryStageExec = {
-    BroadcastQueryStageExec(
-      newStageId,
-      ReusedExchangeExec(newOutput, broadcast))
+    BroadcastQueryStageExec(newStageId, ReusedExchangeExec(newOutput, broadcast))
   }
 
   override def cancel(): Unit = {

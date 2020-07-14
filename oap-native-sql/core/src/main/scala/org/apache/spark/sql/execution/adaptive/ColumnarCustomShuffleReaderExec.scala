@@ -25,38 +25,48 @@ import org.apache.spark.sql.execution.exchange.{ReusedExchangeExec, ShuffleExcha
 import org.apache.spark.sql.execution._
 import org.apache.spark.sql.vectorized.ColumnarBatch
 
+/**
+ * A wrapper of shuffle query stage, which follows the given partition arrangement.
+ *
+ * @param child           It is usually `ShuffleQueryStageExec`, but can be the shuffle exchange
+ *                        node during canonicalization.
+ * @param partitionSpecs  The partition specs that defines the arrangement.
+ * @param description     The string description of this shuffle reader.
+ */
 case class ColumnarCustomShuffleReaderExec(
-  child: SparkPlan,
-  partitionSpecs: Seq[ShufflePartitionSpec],
-  description: String) extends UnaryExecNode {
+    child: SparkPlan,
+    partitionSpecs: Seq[ShufflePartitionSpec],
+    description: String)
+    extends UnaryExecNode {
+  // We don't extends CustomShuffleReaderExec since it has private constructor
 
-    override def output: Seq[Attribute] = child.output
-    override lazy val outputPartitioning: Partitioning = {
-      // If it is a local shuffle reader with one mapper per task, then the output partitioning is
-      // the same as the plan before shuffle.
-      // TODO this check is based on assumptions of callers' behavior but is sufficient for now.
-      if (partitionSpecs.forall(_.isInstanceOf[PartialMapperPartitionSpec]) &&
+  override def output: Seq[Attribute] = child.output
+  override lazy val outputPartitioning: Partitioning = {
+    // If it is a local shuffle reader with one mapper per task, then the output partitioning is
+    // the same as the plan before shuffle.
+    // TODO this check is based on assumptions of callers' behavior but is sufficient for now.
+    if (partitionSpecs.forall(_.isInstanceOf[PartialMapperPartitionSpec]) &&
         partitionSpecs.map(_.asInstanceOf[PartialMapperPartitionSpec].mapIndex).toSet.size ==
           partitionSpecs.length) {
-        child match {
-          case ShuffleQueryStageExec(_, s: ShuffleExchangeExec) =>
-            s.child.outputPartitioning
-          case ShuffleQueryStageExec(_, r @ ReusedExchangeExec(_, s: ShuffleExchangeExec)) =>
-            s.child.outputPartitioning match {
-              case e: Expression => r.updateAttr(e).asInstanceOf[Partitioning]
-              case other => other
-            }
-          case _ =>
-            throw new IllegalStateException("operating on canonicalization plan")
-        }
-      } else {
-        UnknownPartitioning(partitionSpecs.length)
+      child match {
+        case ShuffleQueryStageExec(_, s: ShuffleExchangeExec) =>
+          s.child.outputPartitioning
+        case ShuffleQueryStageExec(_, r @ ReusedExchangeExec(_, s: ShuffleExchangeExec)) =>
+          s.child.outputPartitioning match {
+            case e: Expression => r.updateAttr(e).asInstanceOf[Partitioning]
+            case other => other
+          }
+        case _ =>
+          throw new IllegalStateException("operating on canonicalization plan")
       }
+    } else {
+      UnknownPartitioning(partitionSpecs.length)
     }
+  }
 
-    override def stringArgs: Iterator[Any] = Iterator(description)
+  override def stringArgs: Iterator[Any] = Iterator(description)
 
-    private var cachedShuffleRDD: RDD[ColumnarBatch] = null
+  private var cachedShuffleRDD: RDD[ColumnarBatch] = null
 
   override def supportsColumnar: Boolean = true
 
@@ -66,7 +76,8 @@ case class ColumnarCustomShuffleReaderExec(
         case stage: ShuffleQueryStageExec =>
           new ShuffledColumnarBatchRDD(
             stage.shuffle.asInstanceOf[ColumnarShuffleExchangeExec].columnarShuffleDependency,
-            stage.shuffle.asInstanceOf[ColumnarShuffleExchangeExec].readMetrics, partitionSpecs.toArray)
+            stage.shuffle.asInstanceOf[ColumnarShuffleExchangeExec].readMetrics,
+            partitionSpecs.toArray)
         case _ =>
           throw new IllegalStateException("operating on canonicalization plan")
       }
