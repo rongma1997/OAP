@@ -27,7 +27,7 @@ namespace shuffle {
 
 static constexpr int64_t kDefaultSplitterBufferSize = 4096;
 
-struct BufferMessage {
+struct BufferInfo {
   std::shared_ptr<arrow::Buffer> validity_buffer;
   std::shared_ptr<arrow::Buffer> value_buffer;
   uint8_t* validity_addr;
@@ -50,6 +50,7 @@ enum typeId : int {
   SHUFFLE_2BYTE,
   SHUFFLE_4BYTE,
   SHUFFLE_8BYTE,
+  SHUFFLE_DECIMAL128,
   SHUFFLE_BIT,
   SHUFFLE_BINARY,
   SHUFFLE_LARGE_BINARY,
@@ -59,8 +60,8 @@ enum typeId : int {
 };
 
 static const typeId all[] = {
-    SHUFFLE_1BYTE, SHUFFLE_2BYTE,  SHUFFLE_4BYTE,        SHUFFLE_8BYTE,
-    SHUFFLE_BIT,   SHUFFLE_BINARY, SHUFFLE_LARGE_BINARY, SHUFFLE_NULL,
+    SHUFFLE_1BYTE,  SHUFFLE_2BYTE,        SHUFFLE_4BYTE,      SHUFFLE_8BYTE, SHUFFLE_BIT,
+    SHUFFLE_BINARY, SHUFFLE_LARGE_BINARY, SHUFFLE_DECIMAL128, SHUFFLE_NULL,
 };
 
 // std::shared_ptr<arrow::DataType> fixed_size_binary(int32_t byte_width) {
@@ -103,8 +104,8 @@ static const typeId all[] = {
 
 }  // namespace Type
 
-using BufferMessages = std::deque<std::unique_ptr<BufferMessage>>;
-using TypeBufferMessages = std::vector<BufferMessages>;
+using BufferInfos = std::deque<std::unique_ptr<BufferInfo>>;
+using TypeBufferInfos = std::vector<BufferInfos>;
 using BinaryBuilders = std::deque<std::unique_ptr<arrow::BinaryBuilder>>;
 using LargeBinaryBuilders = std::deque<std::unique_ptr<arrow::LargeBinaryBuilder>>;
 using BufferPtr = std::shared_ptr<arrow::Buffer>;

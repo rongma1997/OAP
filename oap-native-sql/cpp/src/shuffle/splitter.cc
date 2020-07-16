@@ -81,6 +81,8 @@ class Splitter::Impl {
                        case arrow::LargeBinaryType::type_id:
                        case arrow::LargeStringType::type_id:
                          return Type::SHUFFLE_LARGE_BINARY;
+                       case arrow::Decimal128Type::type_id:
+                         return Type::SHUFFLE_DECIMAL128;
                        case arrow::NullType::type_id:
                          return Type::SHUFFLE_NULL;
                        default:
@@ -106,8 +108,8 @@ class Splitter::Impl {
 
     auto local_fs = std::make_shared<arrow::fs::LocalFileSystem>();
     ARROW_ASSIGN_OR_RAISE(auto local_dirs, GetConfiguredLocalDirs());
-    std::transform(local_dirs.cbegin(), local_dirs.cend(), std::back_inserter(local_dirs_fs_),
-                   [local_fs](const auto& base_dir) {
+    std::transform(local_dirs.cbegin(), local_dirs.cend(),
+                   std::back_inserter(local_dirs_fs_), [local_fs](const auto& base_dir) {
                      return std::make_unique<arrow::fs::SubTreeFileSystem>(base_dir,
                                                                            local_fs);
                    });
@@ -135,7 +137,6 @@ class Splitter::Impl {
     auto src_large_binary_arr = SrcLargeBinaryArrays();
     auto src_nullable_large_binary_arr = SrcLargeBinaryArrays();
 
-    // TODO: make dummy_buf private static if possible
     arrow::TypedBufferBuilder<bool> null_bitmap_builder_;
     RETURN_NOT_OK(null_bitmap_builder_.Append(num_rows, true));
 
@@ -147,33 +148,41 @@ class Splitter::Impl {
     // id
     for (auto i = 0; i < num_cols - 1; ++i) {
       const auto& buffers = record_batch.column_data(i + 1)->buffers;
-      if (record_batch.column_data(i + 1)->GetNullCount() == 0) {
-        if (column_type_id_[i] == Type::SHUFFLE_BINARY) {
-          src_binary_arr.push_back(
-              std::static_pointer_cast<arrow::BinaryArray>(record_batch.column(i + 1)));
-        } else if (column_type_id_[i] == Type::SHUFFLE_LARGE_BINARY) {
-          src_large_binary_arr.push_back(
-              std::static_pointer_cast<arrow::LargeBinaryArray>(
-                  record_batch.column(i + 1)));
-        } else if (column_type_id_[i] != Type::SHUFFLE_NULL) {
-          // null bitmap may be nullptr
-          src_addr[column_type_id_[i]].push_back(
-              {.validity_addr = dummy_buf_p,
-               .value_addr = const_cast<uint8_t*>(buffers[1]->data())});
-        }
-      } else {
-        if (column_type_id_[i] == Type::SHUFFLE_BINARY) {
+      auto nullable = record_batch.column_data(i + 1)->GetNullCount() != 0;
+      switch (column_type_id_[i]) {
+        case Type::SHUFFLE_NULL:
+          break;
+        case Type::SHUFFLE_BINARY:
+          if (!nullable) {
+            src_binary_arr.push_back(
+                std::static_pointer_cast<arrow::BinaryArray>(record_batch.column(i + 1)));
+            break;
+          }
           src_nullable_binary_arr.push_back(
               std::static_pointer_cast<arrow::BinaryArray>(record_batch.column(i + 1)));
-        } else if (column_type_id_[i] == Type::SHUFFLE_LARGE_BINARY) {
+          break;
+        case Type::SHUFFLE_LARGE_BINARY:
+          if (!nullable) {
+            src_large_binary_arr.push_back(
+                std::static_pointer_cast<arrow::LargeBinaryArray>(
+                    record_batch.column(i + 1)));
+            break;
+          }
           src_nullable_large_binary_arr.push_back(
               std::static_pointer_cast<arrow::LargeBinaryArray>(
                   record_batch.column(i + 1)));
-        } else if (column_type_id_[i] != Type::SHUFFLE_NULL) {
+          break;
+        default:
+          if (!nullable) {
+            src_addr[column_type_id_[i]].push_back(
+                {.validity_addr = dummy_buf_p,
+                 .value_addr = const_cast<uint8_t*>(buffers[1]->data())});
+            break;
+          }
           src_addr[column_type_id_[i]].push_back(
               {.validity_addr = const_cast<uint8_t*>(buffers[0]->data()),
                .value_addr = const_cast<uint8_t*>(buffers[1]->data())});
-        }
+          break;
       }
     }
 
@@ -231,6 +240,17 @@ class Splitter::Impl {
     }                                                                              \
   }
 
+#define WRITE_DECIMAL                                                                \
+  if (!src_addr[Type::SHUFFLE_DECIMAL128].empty()) {                                 \
+    for (i = read_offset; i < num_rows; ++i) {                                       \
+      ARROW_ASSIGN_OR_RAISE(auto result, pid_writer_[new_id[i]]->WriteDecimal128(    \
+                                             src_addr[Type::SHUFFLE_DECIMAL128], i)) \
+      if (!result) {                                                                 \
+        break;                                                                       \
+      }                                                                              \
+    }                                                                                \
+  }
+
     while (read_offset < num_rows) {
       auto i = read_offset;
       WRITE_FIXEDWIDTH(Type::SHUFFLE_1BYTE, uint8_t);
@@ -238,6 +258,9 @@ class Splitter::Impl {
       WRITE_FIXEDWIDTH(Type::SHUFFLE_4BYTE, uint32_t);
       WRITE_FIXEDWIDTH(Type::SHUFFLE_8BYTE, uint64_t);
       WRITE_FIXEDWIDTH(Type::SHUFFLE_BIT, bool);
+
+      WRITE_DECIMAL
+
       WRITE_BINARY(WriteBinary, arrow::BinaryType, src_binary_arr);
       WRITE_BINARY(WriteLargeBinary, arrow::LargeBinaryType, src_large_binary_arr);
       WRITE_BINARY(WriteNullableBinary, arrow::BinaryType, src_nullable_binary_arr);
@@ -251,11 +274,14 @@ class Splitter::Impl {
   }
 
   arrow::Status Stop() {
-    // write final record batch
-    for (const auto& writer : pid_writer_) {
-      RETURN_NOT_OK(writer->Stop());
+    if (!is_stopped_) {
+      // write final record batch
+      for (const auto& writer : pid_writer_) {
+        RETURN_NOT_OK(writer->Stop());
+      }
+      std::sort(std::begin(temp_files), std::end(temp_files));
     }
-    std::sort(std::begin(temp_files), std::end(temp_files));
+    is_stopped_ = true;
     return arrow::Status::OK();
   }
 
@@ -277,9 +303,12 @@ class Splitter::Impl {
   }
 
   static arrow::Result<std::string> CreateAttemptSubDir(const std::string& root_dir) {
-    auto attempt_sub_dir = arrow::fs::internal::ConcatAbstractPath(root_dir, "columnar-shuffle-" + GenerateUUID());
-    ARROW_ASSIGN_OR_RAISE(auto created, arrow::internal::CreateDirTree(
-        *arrow::internal::PlatformFilename::FromString(attempt_sub_dir)));
+    auto attempt_sub_dir = arrow::fs::internal::ConcatAbstractPath(
+        root_dir, "columnar-shuffle-" + GenerateUUID());
+    ARROW_ASSIGN_OR_RAISE(
+        auto created,
+        arrow::internal::CreateDirTree(
+            *arrow::internal::PlatformFilename::FromString(attempt_sub_dir)));
     // if create succeed, use created subdir, else use root dir
     if (created) {
       return attempt_sub_dir;
@@ -340,6 +369,7 @@ class Splitter::Impl {
   // writer_schema_ removes the first field of schema_ which indicates the partition id
   std::shared_ptr<arrow::Schema> writer_schema_;
 
+  bool is_stopped_ = false;
   int32_t num_partitiions_ = 0;
   Type::typeId last_type_;
   std::vector<Type::typeId> column_type_id_;
@@ -392,9 +422,7 @@ arrow::Result<int64_t> Splitter::TotalBytesWritten() {
   return impl_->TotalBytesWritten();
 }
 
-uint64_t Splitter::TotalWriteTime() {
-  return impl_->TotalWriteTime();
-}
+uint64_t Splitter::TotalWriteTime() { return impl_->TotalWriteTime(); }
 
 Splitter::~Splitter() = default;
 
