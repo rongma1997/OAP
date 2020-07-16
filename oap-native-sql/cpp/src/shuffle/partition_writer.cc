@@ -34,7 +34,7 @@ arrow::Result<std::shared_ptr<PartitionWriter>> PartitionWriter::Create(
     const std::vector<Type::typeId>& column_type_id,
     const std::shared_ptr<arrow::Schema>& schema, const std::string& temp_file_path,
     arrow::Compression::type compression_codec) {
-  auto buffers = TypeBufferMessages(Type::NUM_TYPES);
+  auto buffers = TypeBufferInfos(Type::NUM_TYPES);
   auto binary_bulders = BinaryBuilders();
   auto large_binary_bulders = LargeBinaryBuilders();
 
@@ -51,8 +51,8 @@ arrow::Result<std::shared_ptr<PartitionWriter>> PartitionWriter::Create(
         large_binary_bulders.push_back(std::move(builder));
       } break;
       case Type::SHUFFLE_NULL: {
-        buffers[type_id].push_back(std::unique_ptr<BufferMessage>(
-            new BufferMessage{.validity_buffer = nullptr, .value_buffer = nullptr}));
+        buffers[type_id].push_back(std::unique_ptr<BufferInfo>(
+            new BufferInfo{.validity_buffer = nullptr, .value_buffer = nullptr}));
       } break;
       default: {
         std::shared_ptr<arrow::Buffer> validity_buffer;
@@ -69,8 +69,8 @@ arrow::Result<std::shared_ptr<PartitionWriter>> PartitionWriter::Create(
         }
         validity_addr = validity_buffer->mutable_data();
         value_addr = value_buffer->mutable_data();
-        buffers[type_id].push_back(std::unique_ptr<BufferMessage>(
-            new BufferMessage{.validity_buffer = std::move(validity_buffer),
+        buffers[type_id].push_back(std::unique_ptr<BufferInfo>(
+            new BufferInfo{.validity_buffer = std::move(validity_buffer),
                               .value_buffer = std::move(value_buffer),
                               .validity_addr = validity_addr,
                               .value_addr = value_addr}));
