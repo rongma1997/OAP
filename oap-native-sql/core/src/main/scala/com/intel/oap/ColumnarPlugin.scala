@@ -24,7 +24,8 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.execution.adaptive.{
   ColumnarCustomShuffleReaderExec,
-  CustomShuffleReaderExec
+  CustomShuffleReaderExec,
+  ShuffleQueryStageExec
 }
 import org.apache.spark.sql.execution._
 import org.apache.spark.sql.execution.aggregate.HashAggregateExec
@@ -117,11 +118,18 @@ case class ColumnarPreOverrides(conf: SparkConf) extends Rule[SparkPlan] {
         left,
         right)
       res
+    case plan: ShuffleQueryStageExec if columnarConf.enableColumnarShuffle =>
+      // To catch the case when AQE enabled and there's no wrapped CustomShuffleReaderExec,
+      // and don't call replaceWithColumnarPlan because ShuffleQueryStageExec is a leaf node
+      CoalesceBatchesExec(plan)
+
     case plan: CustomShuffleReaderExec if columnarConf.enableColumnarShuffle =>
-      val child = replaceWithColumnarPlan(plan.child)
+      // To catch the case when AQE enabled and there's a wrapped CustomShuffleReaderExec,
+      // and don't call replaceWithColumnarPlan on it's child because
+      // the child must be the instance of ShuffleQueryStageExec, which is a leaf node
       logDebug(s"Columnar Processing for ${plan.getClass} is currently supported.")
       CoalesceBatchesExec(
-        ColumnarCustomShuffleReaderExec(child, plan.partitionSpecs, plan.description))
+        ColumnarCustomShuffleReaderExec(plan.child, plan.partitionSpecs, plan.description))
 
     case p =>
       val children = p.children.map(replaceWithColumnarPlan)
@@ -148,10 +156,10 @@ case class ColumnarPostOverrides(conf: SparkConf) extends Rule[SparkPlan] {
         case None => throw new IllegalStateException("Reused exchange operator not found.")
       }
       ReusedExchangeExec(id, exchange)
-    // We need to discard c2r since ColumnarShuffleExchangeExec can't be the last operator with AQE enabled
-    case ColumnarToRowExec(child: SparkPlan)
-        if SQLConf.get.adaptiveExecutionEnabled && columnarConf.enableColumnarShuffle && child
-          .isInstanceOf[ColumnarShuffleExchangeExec] =>
+    case ColumnarToRowExec(child: ColumnarShuffleExchangeExec)
+        if SQLConf.get.adaptiveExecutionEnabled && columnarConf.enableColumnarShuffle =>
+      // When AQE enabled, we need to discard ColumnarToRowExec to avoid extra transactions
+      // if ColumnarShuffleExchangeExec is the last plan of the query stage.
       replaceWithColumnarPlan(child)
     case p =>
       val children = p.children.map(replaceWithColumnarPlan)
