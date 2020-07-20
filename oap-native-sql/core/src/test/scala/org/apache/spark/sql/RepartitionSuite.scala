@@ -35,10 +35,12 @@ class RepartitionSuite extends QueryTest with SharedSparkSession {
     super.sparkConf
       .setAppName("test repartition")
       .set("spark.sql.parquet.columnarReaderBatchSize", "4096")
+      .set("spark.sql.execution.arrow.maxRecordsPerBatch", "4096")
       .set("spark.sql.sources.useV1SourceList", "avro")
       .set("spark.sql.extensions", "com.intel.oap.ColumnarPlugin")
-      .set("spark.sql.execution.arrow.maxRecordsPerBatch", "4096")
       .set("spark.shuffle.manager", "org.apache.spark.shuffle.sort.ColumnarShuffleManager")
+      .set("spark.memory.offHeap.enabled", "true")
+      .set("spark.memory.offHeap.size", "10m")
 
   def checkCoulumnarExec(data: DataFrame) = {
     val found = data.queryExecution.executedPlan
@@ -104,26 +106,26 @@ class TPCHTableRepartitionSuite extends RepartitionSuite {
   import testImplicits._
 
   val filePath = getClass.getClassLoader
-    .getResource("part-00000-d648dd34-c9d2-4fe9-87f2-770ef3551442-c000.snappy.parquet")
+    .getResource("supplier")
     .getFile
 
-  override lazy val input = spark.read.parquet(filePath)
+  override lazy val input = spark.read.format("arrow").load(filePath)
 
   test("test tpch round robin partitioning") {
     withRepartition(df => df.repartition(2))
   }
 
   test("test tpch hash partitioning") {
-    withRepartition(df => df.repartition('n_nationkey))
+    withRepartition(df => df.repartition('s_nationkey))
   }
 
   test("test tpch range partitioning") {
-    withRepartition(df => df.repartitionByRange('n_name))
+    withRepartition(df => df.repartitionByRange('s_name))
   }
 
   test("test tpch sum after repartition") {
     withTransformationAndRepartition(
-      df => df.groupBy("n_regionkey").agg(Map("n_nationkey" -> "sum")),
+      df => df.groupBy("s_suppkey").agg(Map("s_nationkey" -> "sum")),
       df => df.repartition(2))
   }
 }
