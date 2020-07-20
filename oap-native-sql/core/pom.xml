@@ -159,6 +159,12 @@
       <!--scope>provided</scope-->
     </dependency>
     <dependency>
+      <groupId>com.intel.oap</groupId>
+      <artifactId>spark-arrow-datasource</artifactId>
+      <version>${project.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
       <groupId>com.google.flatbuffers</groupId>
       <artifactId>flatbuffers-java</artifactId>
       <version>1.9.0</version>

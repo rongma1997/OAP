@@ -60,8 +60,9 @@ enum typeId : int {
 };
 
 static const typeId all[] = {
-    SHUFFLE_1BYTE,  SHUFFLE_2BYTE,        SHUFFLE_4BYTE,      SHUFFLE_8BYTE, SHUFFLE_BIT,
-    SHUFFLE_BINARY, SHUFFLE_LARGE_BINARY, SHUFFLE_DECIMAL128, SHUFFLE_NULL,
+    SHUFFLE_1BYTE,  SHUFFLE_2BYTE,        SHUFFLE_4BYTE,
+    SHUFFLE_8BYTE,  SHUFFLE_DECIMAL128,   SHUFFLE_BIT,
+    SHUFFLE_BINARY, SHUFFLE_LARGE_BINARY, SHUFFLE_NULL,
 };
 
 // std::shared_ptr<arrow::DataType> fixed_size_binary(int32_t byte_width) {
