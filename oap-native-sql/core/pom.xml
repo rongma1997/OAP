@@ -160,7 +160,7 @@
     </dependency>
     <dependency>
       <groupId>com.intel.oap</groupId>
-      <artifactId>spark-arrow-datasource</artifactId>
+      <artifactId>spark-arrow-datasource-standard</artifactId>
       <version>${project.version}</version>
       <scope>test</scope>
     </dependency>
