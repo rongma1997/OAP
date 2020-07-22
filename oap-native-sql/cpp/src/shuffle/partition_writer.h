@@ -205,8 +205,8 @@ class PartitionWriter {
   }
 
   /// Do memory copy for decimal
-  /// \param src source binary array
-  /// \param offset index of the element in source binary array
+  /// \param src source buffers
+  /// \param offset index of the element in source buffers
   /// \return true if write performed, else false
   arrow::Result<bool> inline WriteDecimal128(const SrcBuffers& src,
                                    int64_t offset) {
