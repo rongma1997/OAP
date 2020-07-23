@@ -17,9 +17,8 @@
 
 package org.apache.spark.sql.execution
 
-import com.intel.oap.expression.ConverterUtils
+import com.intel.oap.expression.{ColumnarProjection, ConverterUtils}
 import com.intel.oap.vectorized.{ArrowColumnarBatchSerializer, ArrowWritableColumnVector}
-
 import java.util.Random
 
 import org.apache.arrow.vector.types.pojo.Schema
@@ -35,6 +34,7 @@ import org.apache.spark.sql.catalyst.expressions.{
   Attribute,
   AttributeReference,
   BoundReference,
+  SafeProjection,
   UnsafeProjection
 }
 import org.apache.spark.sql.catalyst.plans.physical._
@@ -49,7 +49,7 @@ import org.apache.spark.sql.execution.metric.{
 }
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.IntegerType
-import org.apache.spark.sql.vectorized.ColumnarBatch
+import org.apache.spark.sql.vectorized.{ColumnVector, ColumnarBatch}
 import org.apache.spark.util.MutablePair
 
 import scala.collection.JavaConverters._
@@ -69,6 +69,7 @@ class ColumnarShuffleExchangeExec(
   override lazy val metrics: Map[String, SQLMetric] = Map(
     "dataSize" -> SQLMetrics.createSizeMetric(sparkContext, "data size"),
     "splitTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "split time"),
+    "computePidTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "compute pid time"),
     "avgReadBatchNumRows" -> SQLMetrics
       .createAverageMetric(sparkContext, "avg read batch num rows")) ++ readMetrics ++ writeMetrics
 
@@ -104,7 +105,8 @@ class ColumnarShuffleExchangeExec(
       serializer,
       writeMetrics,
       longMetric("dataSize"),
-      longMetric("splitTime"))
+      longMetric("splitTime"),
+      longMetric("computePidTime"))
   }
 
   private var cachedShuffleRDD: ShuffledColumnarBatchRDD = _
@@ -155,7 +157,8 @@ object ColumnarShuffleExchangeExec extends Logging {
       serializer: Serializer,
       writeMetrics: Map[String, SQLMetric],
       dataSize: SQLMetric,
-      splitTime: SQLMetric): ShuffleDependency[Int, ColumnarBatch, ColumnarBatch] = {
+      splitTime: SQLMetric,
+      computePidTime: SQLMetric): ShuffleDependency[Int, ColumnarBatch, ColumnarBatch] = {
 
     val arrowSchema: Schema =
       ConverterUtils.toArrowSchema(
@@ -245,10 +248,13 @@ object ColumnarShuffleExchangeExec extends Logging {
                 cbIterator
                   .filter(cb => cb.numRows != 0 && cb.numCols != 0)
                   .map(cb => {
+                    val startTime = System.nanoTime()
                     val pids = cb.rowIterator.asScala.map { row =>
                       part.getPartition(projection(row).getInt(0))
                     }.toArray
-                    (0, pushFrontPartitionIds(pids, cb))
+                    val newCb = pushFrontPartitionIds(pids, cb)
+                    computePidTime.add(System.nanoTime() - startTime)
+                    (0, newCb)
                   }))
             case RangePartitioning(sortingExpressions, _) =>
               val projection =
@@ -257,10 +263,13 @@ object ColumnarShuffleExchangeExec extends Logging {
                 cbIterator
                   .filter(cb => cb.numRows != 0 && cb.numCols != 0)
                   .map(cb => {
+                    val startTime = System.nanoTime()
                     val pids = cb.rowIterator.asScala.map { row =>
                       part.getPartition(projection(row))
                     }.toArray
-                    (0, pushFrontPartitionIds(pids, cb))
+                    val newCb = pushFrontPartitionIds(pids, cb)
+                    computePidTime.add(System.nanoTime() - startTime)
+                    (0, newCb)
                   }))
             case _ => sys.error(s"Exchange not implemented for $newPartitioning")
           }
