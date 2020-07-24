@@ -17,10 +17,10 @@
 
 package org.apache.spark.sql.execution
 
-import com.intel.oap.expression.{ColumnarProjection, ConverterUtils}
-import com.intel.oap.vectorized.{ArrowColumnarBatchSerializer, ArrowWritableColumnVector}
 import java.util.Random
 
+import com.intel.oap.expression.ConverterUtils
+import com.intel.oap.vectorized.{ArrowColumnarBatchSerializer, ArrowWritableColumnVector}
 import org.apache.arrow.vector.types.pojo.Schema
 import org.apache.arrow.vector.{FieldVector, IntVector}
 import org.apache.spark._
@@ -34,7 +34,6 @@ import org.apache.spark.sql.catalyst.expressions.{
   Attribute,
   AttributeReference,
   BoundReference,
-  SafeProjection,
   UnsafeProjection
 }
 import org.apache.spark.sql.catalyst.plans.physical._
@@ -49,7 +48,7 @@ import org.apache.spark.sql.execution.metric.{
 }
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.IntegerType
-import org.apache.spark.sql.vectorized.{ColumnVector, ColumnarBatch}
+import org.apache.spark.sql.vectorized.ColumnarBatch
 import org.apache.spark.util.MutablePair
 
 import scala.collection.JavaConverters._
@@ -70,6 +69,7 @@ class ColumnarShuffleExchangeExec(
     "dataSize" -> SQLMetrics.createSizeMetric(sparkContext, "data size"),
     "splitTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "split time"),
     "computePidTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "compute pid time"),
+    "totalTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "totaltime_shufflewrite"),
     "avgReadBatchNumRows" -> SQLMetrics
       .createAverageMetric(sparkContext, "avg read batch num rows")) ++ readMetrics ++ writeMetrics
 
@@ -106,7 +106,8 @@ class ColumnarShuffleExchangeExec(
       writeMetrics,
       longMetric("dataSize"),
       longMetric("splitTime"),
-      longMetric("computePidTime"))
+      longMetric("computePidTime"),
+      longMetric("totalTime"))
   }
 
   private var cachedShuffleRDD: ShuffledColumnarBatchRDD = _
@@ -158,7 +159,8 @@ object ColumnarShuffleExchangeExec extends Logging {
       writeMetrics: Map[String, SQLMetric],
       dataSize: SQLMetric,
       splitTime: SQLMetric,
-      computePidTime: SQLMetric): ShuffleDependency[Int, ColumnarBatch, ColumnarBatch] = {
+      computePidTime: SQLMetric,
+      totalTime: SQLMetric): ShuffleDependency[Int, ColumnarBatch, ColumnarBatch] = {
 
     val arrowSchema: Schema =
       ConverterUtils.toArrowSchema(
@@ -219,7 +221,8 @@ object ColumnarShuffleExchangeExec extends Logging {
 
       rdd.mapPartitionsWithIndexInternal(
         (_, cbIterator) => {
-          newPartitioning match {
+
+          val newIter = newPartitioning match {
             case SinglePartition =>
               CloseablePairedColumnarBatchIterator(
                 cbIterator
@@ -273,6 +276,13 @@ object ColumnarShuffleExchangeExec extends Logging {
                   }))
             case _ => sys.error(s"Exchange not implemented for $newPartitioning")
           }
+
+          TaskContext.get().addTaskCompletionListener[Unit] { _ =>
+            newIter.closeAppendedVector()
+            totalTime.merge(computePidTime)
+          }
+
+          newIter
         },
         isOrderSensitive = isOrderSensitive)
     }
@@ -285,7 +295,8 @@ object ColumnarShuffleExchangeExec extends Logging {
         shuffleWriterProcessor = createShuffleWriteProcessor(writeMetrics),
         serializedSchema = arrowSchema.toByteArray,
         dataSize = dataSize,
-        splitTime = splitTime)
+        splitTime = splitTime,
+        totalTime = totalTime)
 
     dependency
   }
@@ -305,7 +316,9 @@ object ColumnarShuffleExchangeExec extends Logging {
     val pidVec = new IntVector("pid", vectors(0).getAllocator)
 
     pidVec.allocateNew(length)
-    (0 until length).foreach { i => pidVec.set(i, partitionIds(i)) }
+    (0 until length).foreach { i =>
+      pidVec.set(i, partitionIds(i))
+    }
     pidVec.setValueCount(length)
 
     val newVectors = ArrowWritableColumnVector.loadColumns(length, (pidVec +: vectors).asJava)
@@ -319,9 +332,7 @@ case class CloseablePairedColumnarBatchIterator(iter: Iterator[(Int, ColumnarBat
 
   private var cur: (Int, ColumnarBatch) = _
 
-  TaskContext.get().addTaskCompletionListener[Unit] { _ => closeAppendedVector() }
-
-  private def closeAppendedVector(): Unit = {
+  def closeAppendedVector(): Unit = {
     if (cur != null) {
       logDebug("Close appended partition id vector")
       cur match {
