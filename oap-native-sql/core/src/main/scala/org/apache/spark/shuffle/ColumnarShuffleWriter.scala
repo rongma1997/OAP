@@ -22,11 +22,8 @@ import java.nio.ByteBuffer
 
 import com.google.common.annotations.VisibleForTesting
 import com.google.common.io.Closeables
-import com.intel.oap.vectorized.{
-  ArrowWritableColumnVector,
-  ShuffleSplitterJniWrapper
-}
-
+import com.intel.oap.vectorized.{ArrowWritableColumnVector, PartitionFileInfo, ShuffleSplitterJniWrapper, SplitResult}
+import jdk.nashorn.internal.ir.SplitReturn
 import org.apache.arrow.util.SchemaUtils
 import org.apache.arrow.vector.types.pojo.Schema
 import org.apache.spark._
@@ -67,6 +64,8 @@ class ColumnarShuffleWriter[K, V](
   private val jniWrapper = new ShuffleSplitterJniWrapper()
 
   private var nativeSplitter: Long = 0
+
+  private var splitResult: SplitResult = _
 
   private var partitionLengths: Array[Long] = _
 
@@ -115,9 +114,9 @@ class ColumnarShuffleWriter[K, V](
     }
 
     val startTime = System.nanoTime()
-    jniWrapper.stop(nativeSplitter)
-    dep.splitTime.add(System.nanoTime() - startTime)
-    writeMetrics.incBytesWritten(jniWrapper.getTotalBytesWritten(nativeSplitter))
+    splitResult = jniWrapper.stop(nativeSplitter)
+    dep.splitTime.add(System.nanoTime() - startTime - splitResult.getTotalWriteTime)
+    writeMetrics.incBytesWritten(splitResult.getTotalBytesWritten)
 
     val output = shuffleBlockResolver.getDataFile(dep.shuffleId, mapId)
     val tmp = Utils.tempFileWith(output)
@@ -148,7 +147,7 @@ class ColumnarShuffleWriter[K, V](
       // delete the temporary files hold by native splitter
       if (nativeSplitter != 0) {
         try {
-          jniWrapper.getPartitionFileInfo(nativeSplitter).foreach { fileInfo =>
+          splitResult.getPartitionFileInfo.foreach { fileInfo =>
             {
               val pid = fileInfo.getPid
               val file = new File(fileInfo.getFilePath)
@@ -176,7 +175,7 @@ class ColumnarShuffleWriter[K, V](
     var threwException = true
 
     try {
-      jniWrapper.getPartitionFileInfo(nativeSplitter).foreach { fileInfo =>
+      splitResult.getPartitionFileInfo.foreach { fileInfo =>
         {
           val pid = fileInfo.getPid
           val filePath = fileInfo.getFilePath
@@ -206,7 +205,7 @@ class ColumnarShuffleWriter[K, V](
       threwException = false
     } finally {
       Closeables.close(out, threwException)
-      writeMetrics.incWriteTime(System.nanoTime - writerStartTime)
+      writeMetrics.incWriteTime(System.nanoTime - writerStartTime + splitResult.getTotalWriteTime)
     }
     lengths
   }
