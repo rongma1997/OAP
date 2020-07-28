@@ -47,7 +47,7 @@ import org.apache.spark.sql.execution.metric.{
   SQLShuffleWriteMetricsReporter
 }
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.types.IntegerType
+import org.apache.spark.sql.types.{IntegerType, StructType}
 import org.apache.spark.sql.vectorized.ColumnarBatch
 import org.apache.spark.util.MutablePair
 
@@ -209,6 +209,51 @@ object ColumnarShuffleExchangeExec extends Logging {
       // TODO: Handle BroadcastPartitioning.
     }
 
+    def getPartitionKeyExtractor(): InternalRow => Any = newPartitioning match {
+      case RoundRobinPartitioning(numPartitions) =>
+        // Distributes elements evenly across output partitions, starting from a random partition.
+        var position = new Random(TaskContext.get().partitionId()).nextInt(numPartitions)
+        (row: InternalRow) =>
+          {
+            // The HashPartitioner will handle the `mod` by the number of partitions
+            position += 1
+            position
+          }
+      case h: HashPartitioning =>
+        val projection = UnsafeProjection.create(h.partitionIdExpression :: Nil, outputAttributes)
+        row =>
+          projection(row).getInt(0)
+      case RangePartitioning(sortingExpressions, _) =>
+        val projection =
+          UnsafeProjection.create(sortingExpressions.map(_.child), outputAttributes)
+        row =>
+          projection(row)
+      case SinglePartition => identity
+      case _ => sys.error(s"Exchange not implemented for $newPartitioning")
+    }
+
+    def computeAndAddPartitionId(
+        cbIter: Iterator[ColumnarBatch],
+        partitionKeyExtractor: InternalRow => Any): CloseablePairedColumnarBatchIterator =
+      CloseablePairedColumnarBatchIterator {
+        cbIter
+          .filter(cb => cb.numRows != 0 && cb.numCols != 0)
+          .map { cb =>
+            val startTime = System.nanoTime()
+            val pidVec = ArrowWritableColumnVector
+              .allocateColumns(cb.numRows, new StructType().add("pid", IntegerType))
+              .head
+            (0 until cb.numRows).map { i =>
+              val row = cb.getRow(i)
+              val pid = part.getPartition(partitionKeyExtractor(row))
+              pidVec.appendInt(pid)
+            }
+            val newVectors = (pidVec +: (0 until cb.numCols).map(cb.column)).toArray
+            computePidTime.add(System.nanoTime() - startTime)
+            (0, new ColumnarBatch(newVectors, cb.numRows))
+          }
+      }
+
     val isRoundRobin = newPartitioning.isInstanceOf[RoundRobinPartitioning] &&
       newPartitioning.numPartitions > 1
 
@@ -220,62 +265,9 @@ object ColumnarShuffleExchangeExec extends Logging {
       val isOrderSensitive = isRoundRobin && !SQLConf.get.sortBeforeRepartition
 
       rdd.mapPartitionsWithIndexInternal(
-        (_, cbIterator) => {
-
-          val newIter = newPartitioning match {
-            case SinglePartition =>
-              CloseablePairedColumnarBatchIterator(
-                cbIterator
-                  .filter(cb => cb.numRows != 0 && cb.numCols != 0)
-                  .map(cb => {
-                    val pids = Array.fill(cb.numRows)(0)
-                    (0, pushFrontPartitionIds(pids, cb))
-                  }))
-            case RoundRobinPartitioning(numPartitions) =>
-              // Distributes elements evenly across output partitions, starting from a random partition.
-              var position = new Random(TaskContext.get().partitionId()).nextInt(numPartitions)
-              CloseablePairedColumnarBatchIterator(
-                cbIterator
-                  .filter(cb => cb.numRows != 0 && cb.numCols != 0)
-                  .map(cb => {
-                    val pids = cb.rowIterator.asScala.map { _ =>
-                      position += 1
-                      part.getPartition(position)
-                    }.toArray
-                    (0, pushFrontPartitionIds(pids, cb))
-                  }))
-            case h: HashPartitioning =>
-              val projection =
-                UnsafeProjection.create(h.partitionIdExpression :: Nil, outputAttributes)
-              CloseablePairedColumnarBatchIterator(
-                cbIterator
-                  .filter(cb => cb.numRows != 0 && cb.numCols != 0)
-                  .map(cb => {
-                    val startTime = System.nanoTime()
-                    val pids = cb.rowIterator.asScala.map { row =>
-                      part.getPartition(projection(row).getInt(0))
-                    }.toArray
-                    val newCb = pushFrontPartitionIds(pids, cb)
-                    computePidTime.add(System.nanoTime() - startTime)
-                    (0, newCb)
-                  }))
-            case RangePartitioning(sortingExpressions, _) =>
-              val projection =
-                UnsafeProjection.create(sortingExpressions.map(_.child), outputAttributes)
-              CloseablePairedColumnarBatchIterator(
-                cbIterator
-                  .filter(cb => cb.numRows != 0 && cb.numCols != 0)
-                  .map(cb => {
-                    val startTime = System.nanoTime()
-                    val pids = cb.rowIterator.asScala.map { row =>
-                      part.getPartition(projection(row))
-                    }.toArray
-                    val newCb = pushFrontPartitionIds(pids, cb)
-                    computePidTime.add(System.nanoTime() - startTime)
-                    (0, newCb)
-                  }))
-            case _ => sys.error(s"Exchange not implemented for $newPartitioning")
-          }
+        (_, cbIter) => {
+          val partitionKeyExtractor = getPartitionKeyExtractor()
+          val newIter = computeAndAddPartitionId(cbIter, partitionKeyExtractor)
 
           TaskContext.get().addTaskCompletionListener[Unit] { _ =>
             newIter.closeAppendedVector()
@@ -299,30 +291,6 @@ object ColumnarShuffleExchangeExec extends Logging {
         totalTime = totalTime)
 
     dependency
-  }
-
-  def pushFrontPartitionIds(partitionIds: Seq[Int], cb: ColumnarBatch): ColumnarBatch = {
-    val length = partitionIds.length
-
-    val vectors = (0 until cb.numCols()).map { idx =>
-      val vector = cb
-        .column(idx)
-        .asInstanceOf[ArrowWritableColumnVector]
-        .getValueVector
-        .asInstanceOf[FieldVector]
-      vector.setValueCount(length)
-      vector
-    }
-    val pidVec = new IntVector("pid", vectors(0).getAllocator)
-
-    pidVec.allocateNew(length)
-    (0 until length).foreach { i =>
-      pidVec.set(i, partitionIds(i))
-    }
-    pidVec.setValueCount(length)
-
-    val newVectors = ArrowWritableColumnVector.loadColumns(length, (pidVec +: vectors).asJava)
-    new ColumnarBatch(newVectors.toArray, cb.numRows)
   }
 }
 
