@@ -112,7 +112,7 @@ class PartitionWriter {
         column_type_id_(column_type_id),
         schema_(schema),
         file_path_(std::move(file_path)),
-        file_(std::move(file)),
+        file_os_(std::move(file)),
         buffers_(std::move(buffers)),
         binary_builders_(std::move(binary_builders)),
         large_binary_builders_(std::move(large_binary_builders)),
@@ -148,8 +148,8 @@ class PartitionWriter {
   arrow::Status WriteArrowRecordBatch();
 
   arrow::Result<int64_t> BytesWritten() {
-    if (!file_->closed()) {
-      ARROW_ASSIGN_OR_RAISE(file_footer_, file_->Tell());
+    if (!file_os_->closed()) {
+      ARROW_ASSIGN_OR_RAISE(file_footer_, file_os_->Tell());
     }
     return file_footer_;
   }
@@ -267,11 +267,12 @@ class PartitionWriter {
   const std::vector<Type::typeId>& column_type_id_;
   const std::shared_ptr<arrow::Schema>& schema_;
   const std::string file_path_;
+  std::shared_ptr<arrow::io::FileOutputStream> file_os_;
 
-  std::shared_ptr<arrow::io::FileOutputStream> file_;
   TypeBufferMessages buffers_;
   BinaryBuilders binary_builders_;
   LargeBinaryBuilders large_binary_builders_;
+
   arrow::Compression::type compression_codec_;
 
   std::vector<int64_t> write_offset_;

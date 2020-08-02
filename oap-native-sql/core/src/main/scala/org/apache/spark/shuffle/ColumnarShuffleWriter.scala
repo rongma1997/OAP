@@ -18,7 +18,6 @@
 package org.apache.spark.shuffle
 
 import java.io.{File, FileInputStream, FileOutputStream, IOException}
-import java.nio.ByteBuffer
 
 import com.google.common.annotations.VisibleForTesting
 import com.google.common.io.Closeables
@@ -27,8 +26,6 @@ import com.intel.oap.vectorized.{
   ShuffleSplitterJniWrapper,
   SplitResult
 }
-import org.apache.arrow.util.SchemaUtils
-import org.apache.arrow.vector.types.pojo.Schema
 import org.apache.spark._
 import org.apache.spark.internal.Logging
 import org.apache.spark.scheduler.MapStatus
@@ -82,12 +79,21 @@ class ColumnarShuffleWriter[K, V](
     }
 
     if (nativeSplitter == 0) {
-      val schema: Schema = Schema.deserialize(ByteBuffer.wrap(dep.serializedSchema))
       val localDirs = Utils.getConfiguredLocalDirs(conf).mkString(",")
-      nativeSplitter =
-        jniWrapper.make(SchemaUtils.get.serialize(schema), nativeBufferSize, localDirs)
-      if (compressionEnabled) {
-        jniWrapper.setCompressionCodec(nativeSplitter, compressionCodec)
+      nativeSplitter = if (compressionEnabled) {
+        jniWrapper.make(
+          dep.serializedSchema,
+          nativeBufferSize,
+          localDirs,
+          compressionCodec,
+          dep.partitioningJniBridge)
+      } else {
+        jniWrapper.make(
+          dep.serializedSchema,
+          nativeBufferSize,
+          localDirs,
+          "uncompressed",
+          dep.partitioningJniBridge)
       }
     }
 

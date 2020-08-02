@@ -17,6 +17,7 @@
 
 package org.apache.spark.shuffle
 
+import com.intel.oap.vectorized.PartitioningJniBridge
 import org.apache.spark._
 import org.apache.spark.rdd.RDD
 import org.apache.spark.serializer.Serializer
@@ -50,7 +51,9 @@ class ColumnarShuffleDependency[K: ClassTag, V: ClassTag, C: ClassTag](
     override val mapSideCombine: Boolean = false,
     override val shuffleWriterProcessor: ShuffleWriteProcessor = new ShuffleWriteProcessor,
     val serializedSchema: Array[Byte],
+    val partitioningJniBridge: PartitioningJniBridge,
     val dataSize: SQLMetric,
+    val computePidTime: SQLMetric,
     val splitTime: SQLMetric,
     val totalTime: SQLMetric)
     extends ShuffleDependency[K, V, C](
