@@ -17,17 +17,9 @@
 
 #pragma once
 
-#include <arrow/array.h>
-#include <arrow/record_batch.h>
-#include <arrow/type.h>
-#include <arrow/util/compression.h>
-#include <shuffle/partitioning_jni_bridge.h>
-#include <iostream>
-#include <unordered_map>
-#include <utility>
-#include <vector>
-#include "shuffle/partition_writer.h"
-#include "shuffle/type.h"
-
-}  // namespace shuffle
-}  // namespace sparkcolumnarplugin
+struct PartitioningJniBridge {
+  std::string name;
+  int32_t num_partitions;
+  gandiva::ExpressionVector expr_vec;
+  gandiva::FieldVector field_vec;
+};

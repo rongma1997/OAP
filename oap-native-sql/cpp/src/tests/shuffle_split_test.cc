@@ -76,13 +76,13 @@ class ShuffleTest : public ::testing::Test {
 
 TEST_F(ShuffleTest, TestSplitterSchema) { ASSERT_EQ(*schema_, *splitter_->schema()); }
 
-TEST_F(ShuffleTest, TestSplitterTypeId) {
-  ASSERT_EQ(splitter_->column_type_id(0), Type::SHUFFLE_NULL);
-  ASSERT_EQ(splitter_->column_type_id(1), Type::SHUFFLE_1BYTE);
-  ASSERT_EQ(splitter_->column_type_id(2), Type::SHUFFLE_2BYTE);
-  ASSERT_EQ(splitter_->column_type_id(3), Type::SHUFFLE_8BYTE);
-  ASSERT_EQ(splitter_->column_type_id(4), Type::SHUFFLE_BIT);
-}
+//TEST_F(ShuffleTest, TestSplitterTypeId) {
+//  ASSERT_EQ(splitter_->column_type_id(0), Type::SHUFFLE_NULL);
+//  ASSERT_EQ(splitter_->column_type_id(1), Type::SHUFFLE_1BYTE);
+//  ASSERT_EQ(splitter_->column_type_id(2), Type::SHUFFLE_2BYTE);
+//  ASSERT_EQ(splitter_->column_type_id(3), Type::SHUFFLE_8BYTE);
+//  ASSERT_EQ(splitter_->column_type_id(4), Type::SHUFFLE_BIT);
+//}
 
 TEST_F(ShuffleTest, TestWriterAfterSplit) {
   std::shared_ptr<arrow::RecordBatch> input_batch;

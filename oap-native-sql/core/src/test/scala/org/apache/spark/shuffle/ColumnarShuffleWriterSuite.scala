@@ -20,6 +20,7 @@ package org.apache.spark.shuffle
 import java.io.File
 import java.nio.file.Files
 
+import com.intel.oap.expression.ConverterUtils
 import com.intel.oap.vectorized.ArrowWritableColumnVector
 import org.apache.arrow.memory.RootAllocator
 import org.apache.arrow.vector.ipc.ArrowStreamReader
@@ -82,7 +83,7 @@ class ColumnarShuffleWriterSuite extends SharedSparkSession {
 
     when(dependency.partitioner).thenReturn(new HashPartitioner(11))
     when(dependency.serializer).thenReturn(new JavaSerializer(sparkConf))
-    when(dependency.serializedSchema).thenReturn(schema.toByteArray)
+    when(dependency.serializedSchema).thenReturn(ConverterUtils.getSchemaBytesBuf(schema))
     when(dependency.dataSize)
       .thenReturn(SQLMetrics.createSizeMetric(spark.sparkContext, "data size"))
     when(dependency.splitTime)
