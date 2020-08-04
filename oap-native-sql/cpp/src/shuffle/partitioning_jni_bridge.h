@@ -17,6 +17,9 @@
 
 #pragma once
 
+#include <gandiva/gandiva_aliases.h>
+#include <gandiva/arrow.h>
+
 struct PartitioningJniBridge {
   std::string name;
   int32_t num_partitions;

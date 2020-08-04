@@ -25,7 +25,7 @@
 namespace sparkcolumnarplugin {
 namespace shuffle {
 
-std::string GenerateUUID() {
+static std::string GenerateUUID() {
   boost::uuids::random_generator generator;
   return boost::uuids::to_string(generator());
 }

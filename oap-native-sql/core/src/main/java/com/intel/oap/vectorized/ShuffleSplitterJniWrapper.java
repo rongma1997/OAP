@@ -36,7 +36,7 @@ public class ShuffleSplitterJniWrapper {
    * @return native splitter instance id if created successfully.
    * @throws RuntimeException
    */
-  public native long make(byte[] schemaBuf, long bufferSize, String localDirs, String codec, PartitioningJniBridge bridge)
+  public native long make(byte[] schemaBuf, int bufferSize, String localDirs, String codec, PartitioningJniBridge bridge)
       throws RuntimeException;
 
   /**

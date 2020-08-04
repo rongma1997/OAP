@@ -116,7 +116,7 @@ class PartitionWriter {
         buffers_(std::move(buffers)),
         binary_builders_(std::move(binary_builders)),
         large_binary_builders_(std::move(large_binary_builders)),
-        compression_codec_(compression_codec),
+        compression_type_(compression_codec),
         write_offset_(Type::typeId::NUM_TYPES),
         file_footer_(0),
         file_writer_opened_(false),
@@ -127,7 +127,7 @@ class PartitionWriter {
       int32_t pid, int64_t capacity, Type::typeId last_type,
       const std::vector<Type::typeId>& column_type_id,
       const std::shared_ptr<arrow::Schema>& schema, const std::string& temp_file_path,
-      arrow::Compression::type compression_codec);
+      arrow::Compression::type compression_type);
 
   arrow::Status Stop();
 
@@ -273,7 +273,7 @@ class PartitionWriter {
   BinaryBuilders binary_builders_;
   LargeBinaryBuilders large_binary_builders_;
 
-  arrow::Compression::type compression_codec_;
+  arrow::Compression::type compression_type_;
 
   std::vector<int64_t> write_offset_;
   int64_t file_footer_;
