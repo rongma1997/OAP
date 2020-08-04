@@ -36,8 +36,8 @@
 #include "jni/concurrent_map.h"
 #include "jni/jni_common.h"
 #include "proto/protobuf_utils.h"
+#include "shuffle/partition_splitter.h"
 #include "shuffle/partitioning_jni_bridge.h"
-#include "shuffle/splitter.h"
 
 namespace types {
 class ExpressionList;
@@ -1124,7 +1124,7 @@ Java_com_intel_oap_datasource_parquet_ParquetWriterJniWrapper_nativeWriteNext(
 }
 
 JNIEXPORT jlong JNICALL Java_com_intel_oap_vectorized_ShuffleSplitterJniWrapper_make(
-    JNIEnv* env, jobject, jbyteArray schema_arr, jlong buffer_size, jstring pathObj,
+    JNIEnv* env, jobject, jbyteArray schema_arr, jint buffer_size, jstring pathObj,
     jstring codec_jstr, jobject bridge_jobj) {
   std::shared_ptr<arrow::Schema> schema;
   arrow::Status status;
@@ -1139,8 +1139,7 @@ JNIEXPORT jlong JNICALL Java_com_intel_oap_vectorized_ShuffleSplitterJniWrapper_
 
   auto partitioning_name_jstr =
       (jstring)env->CallObjectMethod(bridge_jobj, partitioning_jni_bridge_get_name);
-  auto partitioning_name = env->GetStringUTFChars(partitioning_name_jstr, JNI_FALSE);
-  env->ReleaseStringUTFChars(partitioning_name_jstr, partitioning_name);
+  auto partitioning_name_c = env->GetStringUTFChars(partitioning_name_jstr, JNI_FALSE);
 
   auto num_partitions =
       env->CallIntMethod(bridge_jobj, partitioning_jni_bridge_get_num_partitions);
@@ -1151,7 +1150,7 @@ JNIEXPORT jlong JNICALL Java_com_intel_oap_vectorized_ShuffleSplitterJniWrapper_
   if (!status.ok()) {
     env->ThrowNew(
         io_exception_class,
-        std::string("failed to readSchema, err msg is " + status.message()).c_str());
+        std::string("Failed to readSchema, err msg is " + status.message()).c_str());
   }
 
   gandiva::ExpressionVector expr_vector;
@@ -1159,23 +1158,25 @@ JNIEXPORT jlong JNICALL Java_com_intel_oap_vectorized_ShuffleSplitterJniWrapper_
   auto msg = MakeExprVector(env, expr_arr, &expr_vector, &ret_types);
   if (!msg.ok()) {
     std::string error_message =
-        "failed to parse expressions protobuf, err msg is " + msg.message();
+        "Failed to parse expressions protobuf, err msg is " + msg.message();
     env->ThrowNew(io_exception_class, error_message.c_str());
   }
 
-  auto bridge = std::make_shared<PartitioningJniBridge>(
-      PartitioningJniBridge{.name = std::string(partitioning_name),
-                                .num_partitions = num_partitions,
-                                .expr_vec = std::move(expr_vector),
-                                .field_vec = std::move(ret_types)});
+  auto partitioning_name = std::string(partitioning_name_c);
+  std::shared_ptr<Splitter> splitter;
+  auto result =
+      Splitter::Make(std::move(partitioning_name), std::move(schema), num_partitions, (int32_t) buffer_size,
+                     arrow::Compression::SNAPPY,
+                     std::move(expr_vector), std::move(ret_types));
 
-  auto result = Splitter::Make(schema, bridge);
   if (!result.ok()) {
+    std::string error_message =
+        "Failed create native shuffle splitter, err msg is " + result.status().message();
     env->ThrowNew(io_exception_class,
-                  std::string("Failed create native shuffle splitter").c_str());
+                  std::string("").c_str());
   }
 
-  (*result)->set_buffer_size(buffer_size);
+  env->ReleaseStringUTFChars(partitioning_name_jstr, partitioning_name_c);
 
   return shuffle_splitter_holder_.Insert(std::shared_ptr<Splitter>(*result));
 }
@@ -1212,14 +1213,6 @@ JNIEXPORT void JNICALL Java_com_intel_oap_vectorized_ShuffleSplitterJniWrapper_s
     env->ThrowNew(io_exception_class,
                   std::string("native split: splitter split failed").c_str());
   }
-}
-
-JNIEXPORT void JNICALL
-Java_com_intel_oap_vectorized_ShuffleSplitterJniWrapper_setPartitionBufferSize(
-    JNIEnv* env, jobject, jlong splitter_id, jlong buffer_size) {
-  auto splitter = GetShuffleSplitter(env, splitter_id);
-
-  splitter->set_buffer_size((int64_t)buffer_size);
 }
 
 JNIEXPORT jobject JNICALL Java_com_intel_oap_vectorized_ShuffleSplitterJniWrapper_stop(

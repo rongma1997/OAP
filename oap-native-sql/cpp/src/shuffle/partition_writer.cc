@@ -34,7 +34,7 @@ arrow::Result<std::shared_ptr<PartitionWriter>> PartitionWriter::Create(
     int32_t pid, int64_t capacity, Type::typeId last_type,
     const std::vector<Type::typeId>& column_type_id,
     const std::shared_ptr<arrow::Schema>& schema, const std::string& temp_file_path,
-    arrow::Compression::type compression_codec) {
+    arrow::Compression::type compression_type) {
   auto buffers = TypeBufferMessages(Type::NUM_TYPES);
   auto binary_bulders = BinaryBuilders();
   auto large_binary_bulders = LargeBinaryBuilders();
@@ -85,7 +85,7 @@ arrow::Result<std::shared_ptr<PartitionWriter>> PartitionWriter::Create(
   return std::make_shared<PartitionWriter>(
       pid, capacity, last_type, column_type_id, schema, temp_file_path, std::move(file_os),
       std::move(buffers), std::move(binary_bulders), std::move(large_binary_bulders),
-      compression_codec);
+      compression_type);
 }
 
 arrow::Status PartitionWriter::Stop() {
@@ -134,7 +134,7 @@ arrow::Status PartitionWriter::WriteArrowRecordBatch() {
 
   if (!file_writer_opened_) {
     auto res = arrow::ipc::NewStreamWriter(file_os_.get(), schema_,
-                                           GetIpcWriteOptions(compression_codec_));
+                                           GetIpcWriteOptions(compression_type_));
     RETURN_NOT_OK(res.status());
     file_writer_ = *res;
     file_writer_opened_ = true;
