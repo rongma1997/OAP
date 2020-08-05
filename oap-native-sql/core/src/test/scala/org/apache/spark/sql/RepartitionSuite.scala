@@ -117,7 +117,7 @@ class TPCHTableRepartitionSuite extends RepartitionSuite {
     withRepartition(df => df.repartition('n_nationkey))
   }
 
-  test("test tpch range partitioning") {
+  ignore("test tpch range partitioning") {
     withRepartition(df => df.repartitionByRange('n_name))
   }
 

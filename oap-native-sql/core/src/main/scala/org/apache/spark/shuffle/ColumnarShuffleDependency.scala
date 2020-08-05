@@ -17,7 +17,7 @@
 
 package org.apache.spark.shuffle
 
-import com.intel.oap.vectorized.PartitioningJniBridge
+import com.intel.oap.vectorized.NativePartitioning
 import org.apache.spark._
 import org.apache.spark.rdd.RDD
 import org.apache.spark.serializer.Serializer
@@ -40,6 +40,7 @@ import scala.reflect.ClassTag
  * @param mapSideCombine whether to perform partial aggregation (also known as map-side combine)
  * @param shuffleWriterProcessor the processor to control the write behavior in ShuffleMapTask
  * @param serializedSchema serialized [[org.apache.arrow.vector.types.pojo.Schema]] for ColumnarBatch
+ * @param nativePartitioning hold partitioning parameters needed by native splitter
  * @param dataSize for shuffle data size tracking
  */
 class ColumnarShuffleDependency[K: ClassTag, V: ClassTag, C: ClassTag](
@@ -51,7 +52,7 @@ class ColumnarShuffleDependency[K: ClassTag, V: ClassTag, C: ClassTag](
     override val mapSideCombine: Boolean = false,
     override val shuffleWriterProcessor: ShuffleWriteProcessor = new ShuffleWriteProcessor,
     val serializedSchema: Array[Byte],
-    val partitioningJniBridge: PartitioningJniBridge,
+    val nativePartitioning: NativePartitioning,
     val dataSize: SQLMetric,
     val computePidTime: SQLMetric,
     val splitTime: SQLMetric,
