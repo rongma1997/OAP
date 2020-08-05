@@ -76,22 +76,5 @@ static const arrow::ipc::IpcWriteOptions GetIpcWriteOptions(arrow::Compression::
   options.use_threads = false;
 }
 
-static const arrow::Result<arrow::Compression::type> GetCompressionCodec() {
-  auto codec_l = std::getenv("NATIVESQL_COMPRESSION_CODEC");
-  auto compression_codec = arrow::Compression::UNCOMPRESSED;
-  if (codec_l != nullptr) {
-    std::string codec_u;
-    std::transform(codec_l, codec_l + std::strlen(codec_l), std::back_inserter(codec_u),
-                   ::toupper);
-
-    ARROW_ASSIGN_OR_RAISE(compression_codec, arrow::util::Codec::GetCompressionType(codec_u))
-
-    if (compression_codec == arrow::Compression::LZ4) {
-      compression_codec = arrow::Compression::LZ4_FRAME;
-    }
-  }
-  return compression_codec;
-}
-
 }  // namespace shuffle
 }  // namespace sparkcolumnarplugin

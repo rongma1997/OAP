@@ -1133,9 +1133,26 @@ JNIEXPORT jlong JNICALL Java_com_intel_oap_vectorized_ShuffleSplitterJniWrapper_
   setenv("NATIVESQL_SPARK_LOCAL_DIRS", joined_path, 1);
   env->ReleaseStringUTFChars(pathObj, joined_path);
 
-  auto compression_codec = env->GetStringUTFChars(codec_jstr, JNI_FALSE);
-  setenv("NATIVESQL_COMPRESSION_CODEC", compression_codec, 1);
-  env->ReleaseStringUTFChars(codec_jstr, compression_codec);
+  auto codec_l = env->GetStringUTFChars(codec_jstr, JNI_FALSE);
+  auto compression_codec = arrow::Compression::UNCOMPRESSED;
+  if (codec_l != nullptr) {
+    std::string codec_u;
+    std::transform(codec_l, codec_l + std::strlen(codec_l), std::back_inserter(codec_u),
+                   ::toupper);
+
+    auto codec_result =  arrow::util::Codec::GetCompressionType(codec_u);
+    if (!codec_result.ok()) {
+      std::string error_message = "Failed to get arrow compression type, err msg is " +
+                                  codec_result.status().message();
+      env->ThrowNew(io_exception_class, std::string("").c_str());
+    }
+    compression_codec = *codec_result;
+
+    if (compression_codec == arrow::Compression::LZ4) {
+      compression_codec = arrow::Compression::LZ4_FRAME;
+    }
+  }
+  env->ReleaseStringUTFChars(codec_jstr, codec_l);
 
   auto partitioning_name_jstr =
       (jstring)env->CallObjectMethod(bridge_jobj, partitioning_jni_bridge_get_name);
@@ -1164,21 +1181,19 @@ JNIEXPORT jlong JNICALL Java_com_intel_oap_vectorized_ShuffleSplitterJniWrapper_
 
   auto partitioning_name = std::string(partitioning_name_c);
   std::shared_ptr<Splitter> splitter;
-  auto result =
-      Splitter::Make(std::move(partitioning_name), std::move(schema), num_partitions, (int32_t) buffer_size,
-                     arrow::Compression::SNAPPY,
-                     std::move(expr_vector), std::move(ret_types));
+  auto make_result = Splitter::Make(partitioning_name, std::move(schema), num_partitions,
+                                    (int32_t)buffer_size, compression_codec,
+                                    std::move(expr_vector), std::move(ret_types));
 
-  if (!result.ok()) {
-    std::string error_message =
-        "Failed create native shuffle splitter, err msg is " + result.status().message();
-    env->ThrowNew(io_exception_class,
-                  std::string("").c_str());
+  if (!make_result.ok()) {
+    std::string error_message = "Failed create native shuffle splitter, err msg is " +
+                                make_result.status().message();
+    env->ThrowNew(io_exception_class, std::string("").c_str());
   }
 
   env->ReleaseStringUTFChars(partitioning_name_jstr, partitioning_name_c);
 
-  return shuffle_splitter_holder_.Insert(std::shared_ptr<Splitter>(*result));
+  return shuffle_splitter_holder_.Insert(std::shared_ptr<Splitter>(*make_result));
 }
 
 JNIEXPORT void JNICALL Java_com_intel_oap_vectorized_ShuffleSplitterJniWrapper_split(
@@ -1231,22 +1246,16 @@ JNIEXPORT jobject JNICALL Java_com_intel_oap_vectorized_ShuffleSplitterJniWrappe
   auto write_time = static_cast<jlong>(splitter->TotalWriteTime());
 
   // TotalBytesWritten
-  auto bytes_written_result = splitter->TotalBytesWritten();
-
-  if (!bytes_written_result.ok()) {
-    env->ThrowNew(io_exception_class,
-                  std::string("native split: get total bytes written failed").c_str());
-  }
-  auto bytes_written = static_cast<jlong>(*bytes_written_result);
+  auto bytes_written = static_cast<jlong>(splitter->TotalBytesWritten());
 
   // GetPartitionFileInfo
   const auto& partition_file_info = splitter->GetPartitionFileInfo();
-  auto num_partitions = partition_file_info.size();
+  auto valid_num_partitions = partition_file_info.size();
 
   jobjectArray partition_file_info_array =
-      env->NewObjectArray(num_partitions, partition_file_info_class, nullptr);
+      env->NewObjectArray(valid_num_partitions, partition_file_info_class, nullptr);
 
-  for (auto i = 0; i < num_partitions; ++i) {
+  for (auto i = 0; i < valid_num_partitions; ++i) {
     jobject file_info_obj =
         env->NewObject(partition_file_info_class, partition_file_info_constructor,
                        partition_file_info[i].first,

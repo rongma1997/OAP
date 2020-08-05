@@ -59,9 +59,9 @@ class Splitter {
    */
   virtual arrow::Status Stop() = 0;
 
-  virtual arrow::Result<int64_t> TotalBytesWritten() = 0;
+  int64_t TotalBytesWritten() { return total_bytes_written_; }
 
-  virtual int64_t TotalWriteTime() = 0;
+  int64_t TotalWriteTime() { return total_write_time_; }
 
   virtual const std::vector<std::pair<int32_t, std::string>>& GetPartitionFileInfo()
       const {
@@ -78,6 +78,9 @@ class Splitter {
   arrow::Compression::type compression_type_;
 
   std::vector<std::pair<int32_t, std::string>> partition_file_info_;
+
+  int64_t total_bytes_written_ = 0;
+  int64_t total_write_time_ = 0;
 };
 
 class SingleSplitter : public Splitter {
@@ -92,10 +95,6 @@ class SingleSplitter : public Splitter {
 
   arrow::Status Stop() override;
 
-  arrow::Result<int64_t> TotalBytesWritten() override;
-
-  int64_t TotalWriteTime() override;
-
  private:
   SingleSplitter(std::shared_ptr<arrow::Schema> schema,
                  arrow::Compression::type compression_type, std::string output_file_path);
@@ -107,9 +106,6 @@ class SingleSplitter : public Splitter {
 
   bool file_writer_opened_ = false;
   std::shared_ptr<arrow::ipc::RecordBatchWriter> file_writer_;
-
-  int64_t bytes_written_ = 0;
-  int64_t total_write_time_ = 0;
 };
 
 class BasePartitionSplitter : public Splitter {
@@ -117,10 +113,6 @@ class BasePartitionSplitter : public Splitter {
   arrow::Status Split(const arrow::RecordBatch&) override;
 
   arrow::Status Stop() override;
-
-  arrow::Result<int64_t> TotalBytesWritten() override;
-
-  int64_t TotalWriteTime() override;
 
   void set_buffer_size(int64_t buffer_size) { buffer_size_ = buffer_size; };
 

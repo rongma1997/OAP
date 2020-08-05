@@ -24,7 +24,6 @@
 #include <gtest/gtest.h>
 #include <iostream>
 #include "shuffle/partition_splitter.h"
-#include "shuffle/type.h"
 #include "tests/test_utils.h"
 
 namespace sparkcolumnarplugin {
@@ -123,10 +122,9 @@ TEST_F(SplitterTest, TestRoundRobinSplitter) {
   ASSERT_NOT_OK(splitter_->Stop());
 
   auto file_info = splitter_->GetPartitionFileInfo();
-  ASSERT_EQ(file_info.size(), num_partitions);
 
-  for (int i = 0; i < num_partitions; ++i) {
-    auto file_name = file_info[i].second;
+  for (auto & info : file_info) {
+    auto file_name = info.second;
     ASSERT_EQ(*arrow::internal::FileExists(
                   *arrow::internal::PlatformFilename::FromString(file_name)),
               true);
@@ -154,7 +152,7 @@ TEST_F(SplitterTest, TestHashSplitter) {
   int32_t buffer_size = 3;
   ARROW_ASSIGN_OR_THROW(
       splitter_, Splitter::Make("hash", schema_, num_partitions, buffer_size,
-                                arrow::Compression::UNCOMPRESSED, {}, {schema_->fields()[1]}))
+                                arrow::Compression::UNCOMPRESSED, {}, {schema_->fields()}))
 
   std::shared_ptr<arrow::RecordBatch> input_batch;
   MakeInputBatch(input_data, schema_, &input_batch);
@@ -164,6 +162,31 @@ TEST_F(SplitterTest, TestHashSplitter) {
     ASSERT_NOT_OK(splitter_->Split(*input_batch))
   }
   ASSERT_NOT_OK(splitter_->Stop());
+
+  auto file_info = splitter_->GetPartitionFileInfo();
+
+  for (auto & info : file_info) {
+    auto file_name = info.second;
+    ASSERT_EQ(*arrow::internal::FileExists(
+        *arrow::internal::PlatformFilename::FromString(file_name)),
+              true);
+    ASSERT_NE(file_name.find(tmp_dir_prefix), std::string::npos);
+
+    std::shared_ptr<arrow::io::ReadableFile> file_in;
+    std::shared_ptr<arrow::ipc::RecordBatchReader> file_reader;
+    ARROW_ASSIGN_OR_THROW(file_in, arrow::io::ReadableFile::Open(file_name))
+
+    ARROW_ASSIGN_OR_THROW(file_reader, arrow::ipc::RecordBatchStreamReader::Open(file_in))
+    ASSERT_EQ(*file_reader->schema(), *splitter_->schema());
+
+    std::shared_ptr<arrow::RecordBatch> rb;
+    ASSERT_NOT_OK(file_reader->ReadNext(&rb));
+    ASSERT_EQ(rb->num_rows(), buffer_size);
+
+    if (!file_in->closed()) {
+      ASSERT_NOT_OK(file_in->Close());
+    }
+  }
 }
 
 }  // namespace shuffle

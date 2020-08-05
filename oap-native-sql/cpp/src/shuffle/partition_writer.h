@@ -143,11 +143,11 @@ class PartitionWriter {
 
   int64_t file_footer() const { return file_footer_; }
 
-  uint64_t write_time() const { return write_time_; }
+  uint64_t GetWriteTime() const { return write_time_; }
 
   arrow::Status WriteArrowRecordBatch();
 
-  arrow::Result<int64_t> BytesWritten() {
+  arrow::Result<int64_t> GetBytesWritten() {
     if (!file_os_->closed()) {
       ARROW_ASSIGN_OR_RAISE(file_footer_, file_os_->Tell());
     }
