@@ -19,7 +19,10 @@ package org.apache.spark.sql.execution
 
 import com.google.common.collect.Lists
 import com.intel.oap.expression.{ColumnarExpression, ColumnarExpressionConverter, ConverterUtils}
-import com.intel.oap.vectorized.{ArrowColumnarBatchSerializer, PartitioningJniBridge}
+import com.intel.oap.vectorized.{
+  ArrowColumnarBatchSerializer,
+  NativePartitioning
+}
 import org.apache.arrow.gandiva.expression.TreeBuilder
 import org.apache.arrow.vector.types.pojo.{Field, Schema}
 import org.apache.spark._
@@ -43,6 +46,7 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.vectorized.ColumnarBatch
 
 import scala.collection.concurrent.TrieMap
+import scala.collection.JavaConverters._
 import scala.concurrent.Future
 
 class ColumnarShuffleExchangeExec(
@@ -155,9 +159,9 @@ object ColumnarShuffleExchangeExec extends Logging {
     val arrowSchema: Schema =
       ConverterUtils.toArrowSchema(outputAttributes)
 
-    val partitioningJniBridge: PartitioningJniBridge = newPartitioning match {
-      case SinglePartition => PartitioningJniBridge("single", 1)
-      case RoundRobinPartitioning(n) => PartitioningJniBridge("rr", n)
+    val nativePartitioning: NativePartitioning = newPartitioning match {
+      case SinglePartition => new NativePartitioning("single", 1)
+      case RoundRobinPartitioning(n) => new NativePartitioning("rr", n)
       case HashPartitioning(exprs, n) =>
         val gandivaExprs = exprs.zipWithIndex.map {
           case (expr, i) =>
@@ -168,7 +172,7 @@ object ColumnarShuffleExchangeExec extends Logging {
             val (treeNode, resultType) = columnarExpr.doColumnarCodeGen(input)
             TreeBuilder.makeExpression(treeNode, Field.nullable(s"res_$i", resultType))
         }
-        PartitioningJniBridge("hash", n, ConverterUtils.getExprListBytesBuf(gandivaExprs.toList))
+        new NativePartitioning("hash", n, ConverterUtils.getExprListBytesBuf(gandivaExprs.toList))
       case RangePartitioning(orders, n) =>
         val gandivaExprs = orders.zipWithIndex.map {
           case (order, i) =>
@@ -179,7 +183,10 @@ object ColumnarShuffleExchangeExec extends Logging {
             val (treeNode, resultType) = columnarExpr.doColumnarCodeGen(input)
             TreeBuilder.makeExpression(treeNode, Field.nullable(s"res_$i", resultType))
         }
-        PartitioningJniBridge("range", n, ConverterUtils.getExprListBytesBuf(gandivaExprs.toList))
+        new NativePartitioning(
+          "range",
+          n,
+          ConverterUtils.getExprListBytesBuf(gandivaExprs.toList))
     }
 
     val isRoundRobin = newPartitioning.isInstanceOf[RoundRobinPartitioning] &&
@@ -205,7 +212,7 @@ object ColumnarShuffleExchangeExec extends Logging {
         serializer,
         shuffleWriterProcessor = createShuffleWriteProcessor(writeMetrics),
         serializedSchema = ConverterUtils.getSchemaBytesBuf(arrowSchema),
-        partitioningJniBridge = partitioningJniBridge,
+        nativePartitioning = nativePartitioning,
         dataSize = dataSize,
         computePidTime = computePidTime,
         splitTime = splitTime,

@@ -58,11 +58,6 @@ static jmethodID partition_file_info_constructor;
 static jclass split_result_class;
 static jmethodID split_result_constructor;
 
-static jclass partitioning_jni_bridge_class;
-static jmethodID partitioning_jni_bridge_get_name;
-static jmethodID partitioning_jni_bridge_get_num_partitions;
-static jmethodID partitioning_jni_bridge_get_serialized_expr_list;
-
 using arrow::jni::ConcurrentMap;
 static ConcurrentMap<std::shared_ptr<arrow::Buffer>> buffer_holder_;
 
@@ -103,7 +98,6 @@ std::shared_ptr<Splitter> GetShuffleSplitter(JNIEnv* env, jlong id) {
     std::string error_message = "invalid reader id " + std::to_string(id);
     env->ThrowNew(illegal_argument_exception_class, error_message.c_str());
   }
-
   return splitter;
 }
 
@@ -221,15 +215,6 @@ jint JNI_OnLoad(JavaVM* vm, void* reserved) {
       GetMethodID(env, split_result_class, "<init>",
                   "(JJ[Lcom/intel/oap/vectorized/PartitionFileInfo;)V");
 
-  partitioning_jni_bridge_class =
-      CreateGlobalClassReference(env, "Lcom/intel/oap/vectorized/PartitioningJniBridge");
-  partitioning_jni_bridge_get_name =
-      GetMethodID(env, partitioning_jni_bridge_class, "name", "()Ljava/lang/String;");
-  partitioning_jni_bridge_get_num_partitions =
-      GetMethodID(env, partitioning_jni_bridge_class, "numPartitions", "()I");
-  partitioning_jni_bridge_get_serialized_expr_list =
-      GetMethodID(env, partitioning_jni_bridge_class, "serializedExprList", "()[B");
-
   return JNI_VERSION;
 }
 
@@ -247,7 +232,6 @@ void JNI_OnUnload(JavaVM* vm, void* reserved) {
   env->DeleteGlobalRef(arrow_record_batch_builder_class);
   env->DeleteGlobalRef(partition_file_info_class);
   env->DeleteGlobalRef(split_result_class);
-  env->DeleteGlobalRef(partitioning_jni_bridge_class);
 
   buffer_holder_.Clear();
   handler_holder_.Clear();
@@ -1123,24 +1107,30 @@ Java_com_intel_oap_datasource_parquet_ParquetWriterJniWrapper_nativeWriteNext(
   env->ReleaseLongArrayElements(bufSizes, in_buf_sizes, JNI_ABORT);
 }
 
-JNIEXPORT jlong JNICALL Java_com_intel_oap_vectorized_ShuffleSplitterJniWrapper_make(
-    JNIEnv* env, jobject, jbyteArray schema_arr, jint buffer_size, jstring pathObj,
-    jstring codec_jstr, jobject bridge_jobj) {
+JNIEXPORT jlong JNICALL Java_com_intel_oap_vectorized_ShuffleSplitterJniWrapper_nativeMake(
+    JNIEnv* env, jobject, jbyteArray schema_arr, jint buffer_size,
+    jstring local_dirs_jstr, jstring codec_jstr, jstring partitioning_name_jstr, jint num_partitions, jbyteArray expr_arr) {
   std::shared_ptr<arrow::Schema> schema;
-  arrow::Status status;
 
-  auto joined_path = env->GetStringUTFChars(pathObj, JNI_FALSE);
-  setenv("NATIVESQL_SPARK_LOCAL_DIRS", joined_path, 1);
-  env->ReleaseStringUTFChars(pathObj, joined_path);
+  auto status = MakeSchema(env, schema_arr, &schema);
+  if (!status.ok()) {
+    env->ThrowNew(
+        io_exception_class,
+        std::string("Failed to readSchema, err msg is " + status.message()).c_str());
+  }
 
-  auto codec_l = env->GetStringUTFChars(codec_jstr, JNI_FALSE);
+  auto local_dirs = env->GetStringUTFChars(local_dirs_jstr, JNI_FALSE);
+  setenv("NATIVESQL_SPARK_LOCAL_DIRS", local_dirs, 1);
+  env->ReleaseStringUTFChars(local_dirs_jstr, local_dirs);
+
   auto compression_codec = arrow::Compression::UNCOMPRESSED;
-  if (codec_l != nullptr) {
+  if (codec_jstr != NULL) {
+    auto codec_l = env->GetStringUTFChars(codec_jstr, JNI_FALSE);
     std::string codec_u;
     std::transform(codec_l, codec_l + std::strlen(codec_l), std::back_inserter(codec_u),
                    ::toupper);
 
-    auto codec_result =  arrow::util::Codec::GetCompressionType(codec_u);
+    auto codec_result = arrow::util::Codec::GetCompressionType(codec_u);
     if (!codec_result.ok()) {
       std::string error_message = "Failed to get arrow compression type, err msg is " +
                                   codec_result.status().message();
@@ -1151,39 +1141,33 @@ JNIEXPORT jlong JNICALL Java_com_intel_oap_vectorized_ShuffleSplitterJniWrapper_
     if (compression_codec == arrow::Compression::LZ4) {
       compression_codec = arrow::Compression::LZ4_FRAME;
     }
+    env->ReleaseStringUTFChars(codec_jstr, codec_l);
   }
-  env->ReleaseStringUTFChars(codec_jstr, codec_l);
 
-  auto partitioning_name_jstr =
-      (jstring)env->CallObjectMethod(bridge_jobj, partitioning_jni_bridge_get_name);
+  if (partitioning_name_jstr == NULL) {
+    env->ThrowNew(io_exception_class, std::string("short partitioning name is null").c_str());
+  }
   auto partitioning_name_c = env->GetStringUTFChars(partitioning_name_jstr, JNI_FALSE);
-
-  auto num_partitions =
-      env->CallIntMethod(bridge_jobj, partitioning_jni_bridge_get_num_partitions);
-  auto expr_arr = (jbyteArray)env->CallObjectMethod(
-      bridge_jobj, partitioning_jni_bridge_get_serialized_expr_list);
-
-  status = MakeSchema(env, schema_arr, &schema);
-  if (!status.ok()) {
-    env->ThrowNew(
-        io_exception_class,
-        std::string("Failed to readSchema, err msg is " + status.message()).c_str());
-  }
-
-  gandiva::ExpressionVector expr_vector;
-  gandiva::FieldVector ret_types;
-  auto msg = MakeExprVector(env, expr_arr, &expr_vector, &ret_types);
-  if (!msg.ok()) {
-    std::string error_message =
-        "Failed to parse expressions protobuf, err msg is " + msg.message();
-    env->ThrowNew(io_exception_class, error_message.c_str());
-  }
-
   auto partitioning_name = std::string(partitioning_name_c);
-  std::shared_ptr<Splitter> splitter;
-  auto make_result = Splitter::Make(partitioning_name, std::move(schema), num_partitions,
-                                    (int32_t)buffer_size, compression_codec,
-                                    std::move(expr_vector), std::move(ret_types));
+
+  arrow::Result<std::shared_ptr<Splitter>> make_result;
+
+  if (expr_arr != NULL) {
+    gandiva::ExpressionVector expr_vector;
+    gandiva::FieldVector ret_types;
+    auto msg = MakeExprVector(env, expr_arr, &expr_vector, &ret_types);
+    if (!msg.ok()) {
+      std::string error_message =
+          "Failed to parse expressions protobuf, err msg is " + msg.message();
+      env->ThrowNew(io_exception_class, error_message.c_str());
+    }
+    make_result = Splitter::Make(partitioning_name, std::move(schema), (int32_t)num_partitions,
+                                      (int32_t)buffer_size, compression_codec,
+                                      std::move(expr_vector), std::move(ret_types));
+  } else {
+    make_result = Splitter::Make(partitioning_name, std::move(schema), (int32_t)num_partitions,
+                                 (int32_t)buffer_size, compression_codec);
+  }
 
   if (!make_result.ok()) {
     std::string error_message = "Failed create native shuffle splitter, err msg is " +
@@ -1312,8 +1296,8 @@ Java_com_intel_oap_vectorized_ShuffleDecompressionJniWrapper_decompress(
 
   // get decompression compression_codec
   auto compression_codec = arrow::Compression::UNCOMPRESSED;
-  auto codec_l = env->GetStringUTFChars(codec_jstr, JNI_FALSE);
-  if (codec_l != nullptr) {
+  if (compression_codec != NULL) {
+    auto codec_l = env->GetStringUTFChars(codec_jstr, JNI_FALSE);
     std::string codec_u;
     std::transform(codec_l, codec_l + std::strlen(codec_l), std::back_inserter(codec_u),
                    ::toupper);
@@ -1329,8 +1313,8 @@ Java_com_intel_oap_vectorized_ShuffleDecompressionJniWrapper_decompress(
     if (compression_codec == arrow::Compression::LZ4) {
       compression_codec = arrow::Compression::LZ4_FRAME;
     }
+    env->ReleaseStringUTFChars(codec_jstr, codec_l);
   }
-  env->ReleaseStringUTFChars(codec_jstr, codec_l);
 
   std::vector<std::shared_ptr<arrow::ArrayData>> arrays;
   while (field_idx < schema->num_fields()) {

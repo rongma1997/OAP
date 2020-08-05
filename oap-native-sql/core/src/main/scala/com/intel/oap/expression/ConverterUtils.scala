@@ -292,14 +292,14 @@ object ConverterUtils extends Logging {
   }
 
   @throws[IOException]
-  private[vectorized] def getSchemaBytesBuf(schema: Schema): Array[Byte] = {
+  def getSchemaBytesBuf(schema: Schema): Array[Byte] = {
     val out: ByteArrayOutputStream = new ByteArrayOutputStream
     MessageSerializer.serialize(new WriteChannel(Channels.newChannel(out)), schema)
     out.toByteArray
   }
 
   @throws[GandivaException]
-  private[vectorized] def getExprListBytesBuf(exprs: List[ExpressionTree]): Array[Byte] = {
+  def getExprListBytesBuf(exprs: List[ExpressionTree]): Array[Byte] = {
     val builder: ExpressionList.Builder = GandivaTypes.ExpressionList.newBuilder
     exprs.foreach { expr =>
       builder.addExprs(expr.toProtobuf)

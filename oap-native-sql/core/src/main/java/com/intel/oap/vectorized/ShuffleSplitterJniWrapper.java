@@ -32,11 +32,30 @@ public class ShuffleSplitterJniWrapper {
    * @param bufferSize size of native buffers hold by each partition writer
    * @param localDirs configured local directories where Spark can write files
    * @param codec compression codec
-   * @param bridge contains the information of partitioning
+   * @param part contains the partitioning parameter needed by native splitter
    * @return native splitter instance id if created successfully.
    * @throws RuntimeException
    */
-  public native long make(byte[] schemaBuf, int bufferSize, String localDirs, String codec, PartitioningJniBridge bridge)
+  public long make(
+      byte[] schemaBuf, int bufferSize, String localDirs, String codec, NativePartitioning part) throws RuntimeException {
+    return nativeMake(
+        schemaBuf,
+        bufferSize,
+        localDirs,
+        codec,
+        part.getShortName(),
+        part.getNumPartitions(),
+        part.getSerializedExprList());
+  }
+
+  public native long nativeMake(
+      byte[] schemaBuf,
+      int bufferSize,
+      String localDirs,
+      String codec,
+      String shortName,
+      int numPartitions,
+      byte[] serializedExprList)
       throws RuntimeException;
 
   /**

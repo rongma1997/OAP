@@ -86,14 +86,14 @@ class ColumnarShuffleWriter[K, V](
           nativeBufferSize,
           localDirs,
           compressionCodec,
-          dep.partitioningJniBridge)
+          dep.nativePartitioning)
       } else {
         jniWrapper.make(
           dep.serializedSchema,
           nativeBufferSize,
           localDirs,
           "uncompressed",
-          dep.partitioningJniBridge)
+          dep.nativePartitioning)
       }
     }
 
