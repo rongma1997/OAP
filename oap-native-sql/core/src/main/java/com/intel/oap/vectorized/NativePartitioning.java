@@ -19,6 +19,9 @@ package com.intel.oap.vectorized;
 
 import java.io.Serializable;
 
+/**
+ * Hold partitioning parameters needed by native splitter
+ */
 public class NativePartitioning implements Serializable {
   String shortName;
   int numPartitions;
