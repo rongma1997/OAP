@@ -70,10 +70,11 @@ static arrow::Result<std::vector<std::string>> GetConfiguredLocalDirs() {
   }
 }
 
-static const arrow::ipc::IpcWriteOptions GetIpcWriteOptions(arrow::Compression::type compression) {
+static arrow::ipc::IpcWriteOptions GetIpcWriteOptions(arrow::Compression::type compression) {
   auto options = arrow::ipc::IpcWriteOptions::Defaults();
   options.compression = compression;
   options.use_threads = false;
+  return options;
 }
 
 }  // namespace shuffle

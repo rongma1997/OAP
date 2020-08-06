@@ -23,7 +23,7 @@
 #include <arrow/util/io_util.h>
 #include <gtest/gtest.h>
 #include <iostream>
-#include "shuffle/partition_splitter.h"
+#include "shuffle/splitter.h"
 #include "tests/test_utils.h"
 
 namespace sparkcolumnarplugin {

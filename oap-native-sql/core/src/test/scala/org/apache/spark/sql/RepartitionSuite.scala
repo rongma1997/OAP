@@ -39,6 +39,7 @@ class RepartitionSuite extends QueryTest with SharedSparkSession {
       .set("spark.sql.extensions", "com.intel.oap.ColumnarPlugin")
       .set("spark.sql.execution.arrow.maxRecordsPerBatch", "4096")
       .set("spark.shuffle.manager", "org.apache.spark.shuffle.sort.ColumnarShuffleManager")
+//      .set("spark.shuffle.compress", "false")
 
   def checkCoulumnarExec(data: DataFrame) = {
     val found = data.queryExecution.executedPlan
@@ -82,7 +83,7 @@ class SmallDataRepartitionSuite extends RepartitionSuite {
     withRepartition(df => df.repartition('id))
   }
 
-  test("test range partitioning") {
+  ignore("test range partitioning") {
     withRepartition(df => df.repartitionByRange('id))
   }
 
@@ -119,6 +120,10 @@ class TPCHTableRepartitionSuite extends RepartitionSuite {
 
   ignore("test tpch range partitioning") {
     withRepartition(df => df.repartitionByRange('n_name))
+  }
+
+  test("test tpch hash partitioning with expression") {
+    withRepartition(df => df.repartition('n_nationkey + 'n_regionkey))
   }
 
   test("test tpch sum after repartition") {

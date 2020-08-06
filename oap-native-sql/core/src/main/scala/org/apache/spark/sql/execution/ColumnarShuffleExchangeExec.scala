@@ -18,11 +18,13 @@
 package org.apache.spark.sql.execution
 
 import com.google.common.collect.Lists
-import com.intel.oap.expression.{ColumnarExpression, ColumnarExpressionConverter, ConverterUtils}
-import com.intel.oap.vectorized.{
-  ArrowColumnarBatchSerializer,
-  NativePartitioning
+import com.intel.oap.expression.{
+  CodeGeneration,
+  ColumnarExpression,
+  ColumnarExpressionConverter,
+  ConverterUtils
 }
+import com.intel.oap.vectorized.{ArrowColumnarBatchSerializer, NativePartitioning}
 import org.apache.arrow.gandiva.expression.TreeBuilder
 import org.apache.arrow.vector.types.pojo.{Field, Schema}
 import org.apache.spark._
@@ -156,8 +158,11 @@ object ColumnarShuffleExchangeExec extends Logging {
       computePidTime: SQLMetric,
       totalTime: SQLMetric): ShuffleDependency[Int, ColumnarBatch, ColumnarBatch] = {
 
-    val arrowSchema: Schema =
-      ConverterUtils.toArrowSchema(outputAttributes)
+    val schemaFields = outputAttributes.map(attr => {
+      Field
+        .nullable(s"${attr.name}#${attr.exprId.id}", CodeGeneration.getResultType(attr.dataType))
+    })
+    val arrowSchema = new Schema(schemaFields.asJava)
 
     val nativePartitioning: NativePartitioning = newPartitioning match {
       case SinglePartition => new NativePartitioning("single", 1)
@@ -170,9 +175,15 @@ object ColumnarShuffleExchangeExec extends Logging {
               .asInstanceOf[ColumnarExpression]
             val input: java.util.List[Field] = Lists.newArrayList()
             val (treeNode, resultType) = columnarExpr.doColumnarCodeGen(input)
-            TreeBuilder.makeExpression(treeNode, Field.nullable(s"res_$i", resultType))
+            val attr = ConverterUtils.getAttrFromExpr(expr)
+            val field = Field
+              .nullable(
+                s"${attr.name}#${attr.exprId.id}",
+                CodeGeneration.getResultType(attr.dataType))
+            TreeBuilder.makeExpression(treeNode, field)
         }
         new NativePartitioning("hash", n, ConverterUtils.getExprListBytesBuf(gandivaExprs.toList))
+      // range partitioning fall back to row-based partition id computation
       case RangePartitioning(orders, n) =>
         val gandivaExprs = orders.zipWithIndex.map {
           case (order, i) =>
@@ -181,7 +192,12 @@ object ColumnarShuffleExchangeExec extends Logging {
               .asInstanceOf[ColumnarExpression]
             val input: java.util.List[Field] = Lists.newArrayList()
             val (treeNode, resultType) = columnarExpr.doColumnarCodeGen(input)
-            TreeBuilder.makeExpression(treeNode, Field.nullable(s"res_$i", resultType))
+            val attr = ConverterUtils.getAttrFromExpr(order.child)
+            val field = Field
+              .nullable(
+                s"${attr.name}#${attr.exprId.id}",
+                CodeGeneration.getResultType(attr.dataType))
+            TreeBuilder.makeExpression(treeNode, field)
         }
         new NativePartitioning(
           "range",
