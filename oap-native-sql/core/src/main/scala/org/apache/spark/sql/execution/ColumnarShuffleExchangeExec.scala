@@ -24,7 +24,11 @@ import com.intel.oap.expression.{
   ColumnarExpressionConverter,
   ConverterUtils
 }
-import com.intel.oap.vectorized.{ArrowColumnarBatchSerializer, NativePartitioning}
+import com.intel.oap.vectorized.{
+  ArrowColumnarBatchSerializer,
+  ArrowWritableColumnVector,
+  NativePartitioning
+}
 import org.apache.arrow.gandiva.expression.TreeBuilder
 import org.apache.arrow.vector.types.pojo.{Field, Schema}
 import org.apache.spark._
@@ -33,7 +37,8 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.serializer.Serializer
 import org.apache.spark.shuffle.{ColumnarShuffleDependency, ShuffleHandle}
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.Attribute
+import org.apache.spark.sql.catalyst.expressions.codegen.LazilyGeneratedOrdering
+import org.apache.spark.sql.catalyst.expressions.{Attribute, BoundReference, UnsafeProjection}
 import org.apache.spark.sql.catalyst.plans.physical._
 import org.apache.spark.sql.execution.CoalesceExec.EmptyPartition
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeExec
@@ -45,7 +50,9 @@ import org.apache.spark.sql.execution.metric.{
   SQLShuffleWriteMetricsReporter
 }
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.types.{IntegerType, StructType}
 import org.apache.spark.sql.vectorized.ColumnarBatch
+import org.apache.spark.util.MutablePair
 
 import scala.collection.concurrent.TrieMap
 import scala.collection.JavaConverters._
@@ -164,6 +171,59 @@ object ColumnarShuffleExchangeExec extends Logging {
     })
     val arrowSchema = new Schema(schemaFields.asJava)
 
+    val rangePartitioner: Partitioner = newPartitioning match {
+      case RangePartitioning(sortingExpressions, numPartitions) =>
+        // Extract only fields used for sorting to avoid collecting large fields that does not
+        // affect sorting result when deciding partition bounds in RangePartitioner
+        val rddForSampling = rdd.mapPartitionsInternal { iter =>
+          // Internally, RangePartitioner runs a job on the RDD that samples keys to compute
+          // partition bounds. To get accurate samples, we need to copy the mutable keys.
+          iter.flatMap(batch => {
+            val rows = batch.rowIterator.asScala
+            val projection =
+              UnsafeProjection.create(sortingExpressions.map(_.child), outputAttributes)
+            val mutablePair = new MutablePair[InternalRow, Null]()
+            rows.map(row => mutablePair.update(projection(row).copy(), null))
+          })
+        }
+        // Construct ordering on extracted sort key.
+        val orderingAttributes = sortingExpressions.zipWithIndex.map {
+          case (ord, i) =>
+            ord.copy(child = BoundReference(i, ord.dataType, ord.nullable))
+        }
+        implicit val ordering = new LazilyGeneratedOrdering(orderingAttributes)
+        new RangePartitioner(
+          numPartitions,
+          rddForSampling,
+          ascending = true,
+          samplePointsPerPartitionHint = SQLConf.get.rangeExchangeSampleSizePerPartition)
+      case _ =>
+        throw new UnsupportedOperationException(
+          s"Can't get RangPartitioner: ${newPartitioning.toString}")
+    }
+
+    def computeAndAddPartitionId(
+        cbIter: Iterator[ColumnarBatch],
+        partitionKeyExtractor: InternalRow => Any): CloseablePairedColumnarBatchIterator =
+      CloseablePairedColumnarBatchIterator {
+        cbIter
+          .filter(cb => cb.numRows != 0 && cb.numCols != 0)
+          .map { cb =>
+            val startTime = System.nanoTime()
+            val pidVec = ArrowWritableColumnVector
+              .allocateColumns(cb.numRows, new StructType().add("pid", IntegerType))
+              .head
+            (0 until cb.numRows).map { i =>
+              val row = cb.getRow(i)
+              val pid = rangePartitioner.getPartition(partitionKeyExtractor(row))
+              pidVec.appendInt(pid)
+            }
+            val newVectors = (pidVec +: (0 until cb.numCols).map(cb.column)).toArray
+            computePidTime.add(System.nanoTime() - startTime)
+            (0, new ColumnarBatch(newVectors, cb.numRows))
+          }
+      }
+
     val nativePartitioning: NativePartitioning = newPartitioning match {
       case SinglePartition => new NativePartitioning("single", 1)
       case RoundRobinPartitioning(n) => new NativePartitioning("rr", n)
@@ -185,24 +245,7 @@ object ColumnarShuffleExchangeExec extends Logging {
         new NativePartitioning("hash", n, ConverterUtils.getExprListBytesBuf(gandivaExprs.toList))
       // range partitioning fall back to row-based partition id computation
       case RangePartitioning(orders, n) =>
-        val gandivaExprs = orders.zipWithIndex.map {
-          case (order, i) =>
-            val columnarExpr = ColumnarExpressionConverter
-              .replaceWithColumnarExpression(order.child)
-              .asInstanceOf[ColumnarExpression]
-            val input: java.util.List[Field] = Lists.newArrayList()
-            val (treeNode, resultType) = columnarExpr.doColumnarCodeGen(input)
-            val attr = ConverterUtils.getAttrFromExpr(order.child)
-            val field = Field
-              .nullable(
-                s"${attr.name}#${attr.exprId.id}",
-                CodeGeneration.getResultType(attr.dataType))
-            TreeBuilder.makeExpression(treeNode, field)
-        }
-        new NativePartitioning(
-          "range",
-          n,
-          ConverterUtils.getExprListBytesBuf(gandivaExprs.toList))
+        new NativePartitioning("range", n)
     }
 
     val isRoundRobin = newPartitioning.isInstanceOf[RoundRobinPartitioning] &&
@@ -211,14 +254,35 @@ object ColumnarShuffleExchangeExec extends Logging {
     // RDD passed to ShuffleDependency should be the form of key-value pairs.
     // ColumnarShuffleWriter will compute ids from ColumnarBatch on native side other than read the "key" part.
     // Thus in Columnar Shuffle we never use the "key" part.
-    val rddWithDummyKey: RDD[Product2[Int, ColumnarBatch]] = {
-      val isOrderSensitive = isRoundRobin && !SQLConf.get.sortBeforeRepartition
-      rdd.mapPartitionsWithIndexInternal(
-        (_, cbIter) =>
-          cbIter.map { cb =>
-            (0, cb)
-        },
-        isOrderSensitive = isOrderSensitive)
+    val isOrderSensitive = isRoundRobin && !SQLConf.get.sortBeforeRepartition
+
+    val rddWithDummyKey: RDD[Product2[Int, ColumnarBatch]] = newPartitioning match {
+      case RangePartitioning(sortingExpressions, _) =>
+        rdd.mapPartitionsWithIndexInternal(
+          (_, cbIter) => {
+            val partitionKeyExtractor: InternalRow => Any = {
+              val projection =
+                UnsafeProjection.create(sortingExpressions.map(_.child), outputAttributes)
+              row =>
+                projection(row)
+            }
+            val newIter = computeAndAddPartitionId(cbIter, partitionKeyExtractor)
+
+            TaskContext.get().addTaskCompletionListener[Unit] { _ =>
+              newIter.closeAppendedVector()
+              totalTime.merge(computePidTime)
+            }
+
+            newIter
+          },
+          isOrderSensitive = isOrderSensitive)
+      case _ =>
+        rdd.mapPartitionsWithIndexInternal(
+          (_, cbIter) =>
+            cbIter.map { cb =>
+              (0, cb)
+          },
+          isOrderSensitive = isOrderSensitive)
     }
 
     val dependency =
@@ -235,5 +299,35 @@ object ColumnarShuffleExchangeExec extends Logging {
         totalTime = totalTime)
 
     dependency
+  }
+}
+
+case class CloseablePairedColumnarBatchIterator(iter: Iterator[(Int, ColumnarBatch)])
+    extends Iterator[(Int, ColumnarBatch)]
+    with Logging {
+
+  private var cur: (Int, ColumnarBatch) = _
+
+  def closeAppendedVector(): Unit = {
+    if (cur != null) {
+      logDebug("Close appended partition id vector")
+      cur match {
+        case (_, cb: ColumnarBatch) =>
+          cb.column(0).asInstanceOf[ArrowWritableColumnVector].close()
+      }
+      cur = null
+    }
+  }
+
+  override def hasNext: Boolean = {
+    iter.hasNext
+  }
+
+  override def next(): (Int, ColumnarBatch) = {
+    closeAppendedVector()
+    if (iter.hasNext) {
+      cur = iter.next()
+      cur
+    } else Iterator.empty.next()
   }
 }
