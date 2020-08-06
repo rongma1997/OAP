@@ -36,7 +36,7 @@
 #include "jni/concurrent_map.h"
 #include "jni/jni_common.h"
 #include "proto/protobuf_utils.h"
-#include "shuffle/partition_splitter.h"
+#include "shuffle/splitter.h"
 #include "shuffle/partitioning_jni_bridge.h"
 
 namespace types {
@@ -1296,7 +1296,7 @@ Java_com_intel_oap_vectorized_ShuffleDecompressionJniWrapper_decompress(
 
   // get decompression compression_codec
   auto compression_codec = arrow::Compression::UNCOMPRESSED;
-  if (compression_codec != NULL) {
+  if (codec_jstr != NULL) {
     auto codec_l = env->GetStringUTFChars(codec_jstr, JNI_FALSE);
     std::string codec_u;
     std::transform(codec_l, codec_l + std::strlen(codec_l), std::back_inserter(codec_u),

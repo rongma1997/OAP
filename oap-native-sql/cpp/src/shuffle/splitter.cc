@@ -20,7 +20,7 @@
 #include <memory>
 #include <utility>
 
-#include "partition_splitter.h"
+#include "splitter.h"
 
 namespace sparkcolumnarplugin {
 namespace shuffle {

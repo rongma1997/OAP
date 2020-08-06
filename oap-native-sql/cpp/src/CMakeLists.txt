@@ -207,7 +207,7 @@ set(SPARK_COLUMNAR_PLUGIN_SRCS
         codegen/arrow_compute/ext/codegen_node_visitor.cc
         codegen/arrow_compute/ext/codegen_register.cc
         shuffle/partition_writer.cc
-        shuffle/partition_splitter.cc
+        shuffle/splitter.cc
         precompile/hash_map.cc
         precompile/sparse_hash_map.cc
         precompile/builder.cc
