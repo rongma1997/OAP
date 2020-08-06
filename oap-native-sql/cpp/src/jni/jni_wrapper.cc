@@ -36,8 +36,8 @@
 #include "jni/concurrent_map.h"
 #include "jni/jni_common.h"
 #include "proto/protobuf_utils.h"
-#include "shuffle/splitter.h"
 #include "shuffle/partitioning_jni_bridge.h"
+#include "shuffle/splitter.h"
 
 namespace types {
 class ExpressionList;
@@ -1107,9 +1107,11 @@ Java_com_intel_oap_datasource_parquet_ParquetWriterJniWrapper_nativeWriteNext(
   env->ReleaseLongArrayElements(bufSizes, in_buf_sizes, JNI_ABORT);
 }
 
-JNIEXPORT jlong JNICALL Java_com_intel_oap_vectorized_ShuffleSplitterJniWrapper_nativeMake(
+JNIEXPORT jlong JNICALL
+Java_com_intel_oap_vectorized_ShuffleSplitterJniWrapper_nativeMake(
     JNIEnv* env, jobject, jbyteArray schema_arr, jint buffer_size,
-    jstring local_dirs_jstr, jstring codec_jstr, jstring partitioning_name_jstr, jint num_partitions, jbyteArray expr_arr) {
+    jstring local_dirs_jstr, jstring codec_jstr, jstring partitioning_name_jstr,
+    jint num_partitions, jbyteArray expr_arr) {
   std::shared_ptr<arrow::Schema> schema;
 
   auto status = MakeSchema(env, schema_arr, &schema);
@@ -1123,7 +1125,7 @@ JNIEXPORT jlong JNICALL Java_com_intel_oap_vectorized_ShuffleSplitterJniWrapper_
   setenv("NATIVESQL_SPARK_LOCAL_DIRS", local_dirs, 1);
   env->ReleaseStringUTFChars(local_dirs_jstr, local_dirs);
 
-  auto compression_codec = arrow::Compression::UNCOMPRESSED;
+  auto compression_type = arrow::Compression::UNCOMPRESSED;
   if (codec_jstr != NULL) {
     auto codec_l = env->GetStringUTFChars(codec_jstr, JNI_FALSE);
     std::string codec_u;
@@ -1136,16 +1138,17 @@ JNIEXPORT jlong JNICALL Java_com_intel_oap_vectorized_ShuffleSplitterJniWrapper_
                                   codec_result.status().message();
       env->ThrowNew(io_exception_class, std::string("").c_str());
     }
-    compression_codec = *codec_result;
+    compression_type = *codec_result;
 
-    if (compression_codec == arrow::Compression::LZ4) {
-      compression_codec = arrow::Compression::LZ4_FRAME;
+    if (compression_type == arrow::Compression::LZ4) {
+      compression_type = arrow::Compression::LZ4_FRAME;
     }
     env->ReleaseStringUTFChars(codec_jstr, codec_l);
   }
 
   if (partitioning_name_jstr == NULL) {
-    env->ThrowNew(io_exception_class, std::string("short partitioning name is null").c_str());
+    env->ThrowNew(io_exception_class,
+                  std::string("short partitioning name is null").c_str());
   }
   auto partitioning_name_c = env->GetStringUTFChars(partitioning_name_jstr, JNI_FALSE);
   auto partitioning_name = std::string(partitioning_name_c);
@@ -1161,12 +1164,12 @@ JNIEXPORT jlong JNICALL Java_com_intel_oap_vectorized_ShuffleSplitterJniWrapper_
           "Failed to parse expressions protobuf, err msg is " + msg.message();
       env->ThrowNew(io_exception_class, error_message.c_str());
     }
-    make_result = Splitter::Make(partitioning_name, std::move(schema), (int32_t)num_partitions,
-                                      (int32_t)buffer_size, compression_codec,
-                                      std::move(expr_vector), std::move(ret_types));
+    make_result =
+        Splitter::Make(partitioning_name, std::move(schema), (int32_t)num_partitions,
+                       std::move(expr_vector), std::move(ret_types));
   } else {
-    make_result = Splitter::Make(partitioning_name, std::move(schema), (int32_t)num_partitions,
-                                 (int32_t)buffer_size, compression_codec);
+    make_result =
+        Splitter::Make(partitioning_name, std::move(schema), (int32_t)num_partitions);
   }
 
   if (!make_result.ok()) {
@@ -1174,10 +1177,13 @@ JNIEXPORT jlong JNICALL Java_com_intel_oap_vectorized_ShuffleSplitterJniWrapper_
                                 make_result.status().message();
     env->ThrowNew(io_exception_class, std::string("").c_str());
   }
+  auto splitter = std::move(*make_result);
+  splitter->set_compression_type(compression_type);
+  splitter->set_buffer_size((int32_t)buffer_size);
 
   env->ReleaseStringUTFChars(partitioning_name_jstr, partitioning_name_c);
 
-  return shuffle_splitter_holder_.Insert(std::shared_ptr<Splitter>(*make_result));
+  return shuffle_splitter_holder_.Insert(std::shared_ptr<Splitter>(splitter));
 }
 
 JNIEXPORT void JNICALL Java_com_intel_oap_vectorized_ShuffleSplitterJniWrapper_split(

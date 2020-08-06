@@ -3,4 +3,4 @@ package_add_test(TestArrowComputeHashAggregate arrow_compute_test_hashaggregate.
 package_add_test(TestArrowComputeJoin arrow_compute_test_join.cc)
 package_add_test(TestArrowComputeSort arrow_compute_test_sort.cc)
 package_add_test(TestArrowComputePrecompile arrow_compute_test_precompile.cc)
-package_add_test(TestShuffleSplit shuffle_splitter_test.cc)
+package_add_test(TestShuffleSplit shuffle_split_test.cc)

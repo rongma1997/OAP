@@ -39,7 +39,6 @@ import scala.reflect.ClassTag
  * @param aggregator map/reduce-side aggregator for RDD's shuffle
  * @param mapSideCombine whether to perform partial aggregation (also known as map-side combine)
  * @param shuffleWriterProcessor the processor to control the write behavior in ShuffleMapTask
- * @param serializedSchema serialized [[org.apache.arrow.vector.types.pojo.Schema]] for ColumnarBatch
  * @param nativePartitioning hold partitioning parameters needed by native splitter
  * @param dataSize for shuffle data size tracking
  */
@@ -51,7 +50,6 @@ class ColumnarShuffleDependency[K: ClassTag, V: ClassTag, C: ClassTag](
     override val aggregator: Option[Aggregator[K, V, C]] = None,
     override val mapSideCombine: Boolean = false,
     override val shuffleWriterProcessor: ShuffleWriteProcessor = new ShuffleWriteProcessor,
-    val serializedSchema: Array[Byte],
     val nativePartitioning: NativePartitioning,
     val dataSize: SQLMetric,
     val computePidTime: SQLMetric,
