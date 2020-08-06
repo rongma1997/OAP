@@ -25,16 +25,17 @@ import java.io.Serializable;
 public class NativePartitioning implements Serializable {
   String shortName;
   int numPartitions;
+  byte[] serializedSchema;
   byte[] serializedExprList;
 
-  public NativePartitioning(String shortName, int numPartitions, byte[] serializedExprList) {
+  public NativePartitioning(String shortName, int numPartitions, byte[] serialzedSchema, byte[] serializedExprList) {
     this.shortName = shortName;
     this.numPartitions = numPartitions;
     this.serializedExprList = serializedExprList;
   }
 
-  public NativePartitioning(String shortName, int numPartitions) {
-    this(shortName, numPartitions, null);
+  public NativePartitioning(String shortName, int numPartitions, byte[] serializedSchema) {
+    this(shortName, numPartitions, serializedSchema, null);
   }
 
   public String getShortName() {

@@ -18,6 +18,7 @@
 #pragma once
 
 #include <random>
+#include <utility>
 
 #include <arrow/filesystem/filesystem.h>
 #include <arrow/filesystem/localfs.h>
@@ -39,15 +40,20 @@ class Splitter {
 
   static arrow::Result<std::shared_ptr<Splitter>> Make(
       const std::string& short_name, std::shared_ptr<arrow::Schema> schema,
-      int num_partitions, int32_t buffer_size = kDefaultSplitterBufferSize,
-      arrow::Compression::type compression_type = arrow::Compression::UNCOMPRESSED,
-      gandiva::ExpressionVector expr_vector = {}, gandiva::FieldVector field_vector = {});
+      int num_partitions, gandiva::ExpressionVector expr_vector,
+      gandiva::FieldVector field_vector);
 
-  const std::shared_ptr<arrow::Schema>& schema() const { return schema_; }
+  static arrow::Result<std::shared_ptr<Splitter>> Make(
+      const std::string& short_name, std::shared_ptr<arrow::Schema> schema,
+      int num_partitions);
+
+  virtual const std::shared_ptr<arrow::Schema>& schema() const { return schema_; }
 
   void set_compression_type(arrow::Compression::type compression_type) {
     compression_type_ = compression_type;
   }
+
+  void set_buffer_size(int64_t buffer_size) { buffer_size_ = buffer_size; };
 
   virtual arrow::Status Split(const arrow::RecordBatch&) = 0;
 
@@ -70,12 +76,11 @@ class Splitter {
 
  protected:
   Splitter() = default;
-  Splitter(std::shared_ptr<arrow::Schema> schema,
-           arrow::Compression::type compression_type)
-      : schema_(std::move(schema)), compression_type_(compression_type) {}
+  Splitter(std::shared_ptr<arrow::Schema> schema) : schema_(std::move(schema)) {}
 
   std::shared_ptr<arrow::Schema> schema_;
-  arrow::Compression::type compression_type_;
+  arrow::Compression::type compression_type_ = arrow::Compression::UNCOMPRESSED;
+  int32_t buffer_size_ = kDefaultSplitterBufferSize;
 
   std::vector<std::pair<int32_t, std::string>> partition_file_info_;
 
@@ -88,16 +93,14 @@ class SingleSplitter : public Splitter {
   ~SingleSplitter() = default;
 
   static arrow::Result<std::shared_ptr<SingleSplitter>> Create(
-      std::shared_ptr<arrow::Schema> schema,
-      arrow::Compression::type compression_type = arrow::Compression::UNCOMPRESSED);
+      std::shared_ptr<arrow::Schema> schema);
 
   arrow::Status Split(const arrow::RecordBatch& rb) override;
 
   arrow::Status Stop() override;
 
  private:
-  SingleSplitter(std::shared_ptr<arrow::Schema> schema,
-                 arrow::Compression::type compression_type, std::string output_file_path);
+  SingleSplitter(std::shared_ptr<arrow::Schema> schema, std::string output_file_path);
 
   const std::string file_path_;
 
@@ -110,23 +113,21 @@ class SingleSplitter : public Splitter {
 
 class BasePartitionSplitter : public Splitter {
  public:
-  arrow::Status Split(const arrow::RecordBatch&) override;
+  arrow::Status Split(const arrow::RecordBatch& rb) override;
 
   arrow::Status Stop() override;
 
-  void set_buffer_size(int64_t buffer_size) { buffer_size_ = buffer_size; };
-
  protected:
-  BasePartitionSplitter(int32_t num_partitions, std::shared_ptr<arrow::Schema> schema,
-                        int32_t buffer_size, arrow::Compression::type compression_type)
-      : Splitter(std::move(schema), compression_type),
-        buffer_size_(buffer_size),
-        num_partitions_(num_partitions) {}
+  BasePartitionSplitter(int32_t num_partitions, std::shared_ptr<arrow::Schema> schema)
+      : Splitter(std::move(schema)), num_partitions_(num_partitions) {}
 
   virtual arrow::Status Init();
 
-  virtual arrow::Result<std::vector<std::shared_ptr<PartitionWriter>>> GetPartitionWriter(
-      const arrow::RecordBatch& rb) = 0;
+  virtual arrow::Result<std::vector<std::shared_ptr<PartitionWriter>>>
+  GetNextBatchPartitionWriter(const arrow::RecordBatch& rb) = 0;
+
+  arrow::Status DoSplit(const arrow::RecordBatch& rb,
+                        std::vector<std::shared_ptr<PartitionWriter>> writers);
 
   arrow::Result<std::string> CreateDataFile();
 
@@ -135,9 +136,8 @@ class BasePartitionSplitter : public Splitter {
   std::vector<std::shared_ptr<PartitionWriter>> partition_writer_;
 
   // partition writer parameters
-  int32_t buffer_size_;
+  Type::typeId last_type_id_ = Type::SHUFFLE_NOT_IMPLEMENTED;
   std::vector<Type::typeId> column_type_id_;
-  Type::typeId last_type_id_;
 
   // configured local dirs for temporary output file
   int32_t dir_selection_ = 0;
@@ -147,19 +147,15 @@ class BasePartitionSplitter : public Splitter {
 class RoundRobinSplitter : public BasePartitionSplitter {
  public:
   static arrow::Result<std::shared_ptr<RoundRobinSplitter>> Create(
-      int32_t num_partitions, std::shared_ptr<arrow::Schema> schema,
-      int32_t buffer_size = kDefaultSplitterBufferSize,
-      arrow::Compression::type compression_type = arrow::Compression::UNCOMPRESSED);
+      int32_t num_partitions, std::shared_ptr<arrow::Schema> schema);
 
  protected:
-  arrow::Result<std::vector<std::shared_ptr<PartitionWriter>>> GetPartitionWriter(
-      const arrow::RecordBatch& rb) override;
+  arrow::Result<std::vector<std::shared_ptr<PartitionWriter>>>
+  GetNextBatchPartitionWriter(const arrow::RecordBatch& rb) override;
 
  private:
-  RoundRobinSplitter(int32_t num_partitions, std::shared_ptr<arrow::Schema> schema,
-                     int32_t buffer_size, arrow::Compression::type compression_type)
-      : BasePartitionSplitter(num_partitions, std::move(schema), buffer_size,
-                              compression_type) {}
+  RoundRobinSplitter(int32_t num_partitions, std::shared_ptr<arrow::Schema> schema)
+      : BasePartitionSplitter(num_partitions, std::move(schema)) {}
 
   int32_t pid_selection_ = 0;
 };
@@ -168,13 +164,11 @@ class BaseProjectionSplitter : public BasePartitionSplitter {
  protected:
   BaseProjectionSplitter() = default;
   BaseProjectionSplitter(int32_t num_partitions, std::shared_ptr<arrow::Schema> schema,
-                         int32_t buffer_size, arrow::Compression::type compression_type,
                          gandiva::ExpressionVector expr_vector,
                          gandiva::FieldVector field_vector)
-      : BasePartitionSplitter(num_partitions, std::move(schema), buffer_size,
-                              compression_type),
-        expr_vector_(expr_vector),
-        field_vector_(field_vector) {}
+      : BasePartitionSplitter(num_partitions, std::move(schema)),
+        expr_vector_(std::move(expr_vector)),
+        field_vector_(std::move(field_vector)) {}
 
   arrow::Status Init() override {
     RETURN_NOT_OK(BasePartitionSplitter::Init());
@@ -191,22 +185,40 @@ class BaseProjectionSplitter : public BasePartitionSplitter {
 class HashSplitter : public BaseProjectionSplitter {
  public:
   static arrow::Result<std::shared_ptr<HashSplitter>> Create(
-      int32_t num_partitions, std::shared_ptr<arrow::Schema> schema, int32_t buffer_size,
-      arrow::Compression::type compression_type, gandiva::ExpressionVector expr_vector,
-      gandiva::FieldVector field_vector);
+      int32_t num_partitions, std::shared_ptr<arrow::Schema> schema,
+      gandiva::ExpressionVector expr_vector, gandiva::FieldVector field_vector);
 
  private:
   HashSplitter(int32_t num_partitions, std::shared_ptr<arrow::Schema> schema,
-               int32_t buffer_size, arrow::Compression::type compression_type,
                gandiva::ExpressionVector expr_vector, gandiva::FieldVector field_vector)
-      : BaseProjectionSplitter(num_partitions, std::move(schema), buffer_size,
-                               compression_type, std::move(expr_vector),
+      : BaseProjectionSplitter(num_partitions, std::move(schema), std::move(expr_vector),
                                std::move(field_vector)) {}
 
   arrow::Status CreateProjector() override;
 
-  arrow::Result<std::vector<std::shared_ptr<PartitionWriter>>> GetPartitionWriter(
-      const arrow::RecordBatch& rb) override;
+  arrow::Result<std::vector<std::shared_ptr<PartitionWriter>>>
+  GetNextBatchPartitionWriter(const arrow::RecordBatch& rb) override;
+};
+
+class FallbackRangeSplitter : public BasePartitionSplitter {
+ public:
+  static arrow::Result<std::shared_ptr<FallbackRangeSplitter>> Create(
+      int32_t num_partitions, std::shared_ptr<arrow::Schema> schema);
+
+  arrow::Status Split(const arrow::RecordBatch& rb) override;
+
+  const std::shared_ptr<arrow::Schema>& schema() const override { return input_schema_; }
+
+ private:
+  FallbackRangeSplitter(int32_t num_partitions, std::shared_ptr<arrow::Schema> schema)
+      : BasePartitionSplitter(num_partitions, std::move(schema)) {}
+
+  arrow::Status Init() override;
+
+  arrow::Result<std::vector<std::shared_ptr<PartitionWriter>>>
+  GetNextBatchPartitionWriter(const arrow::RecordBatch& rb) override;
+
+  std::shared_ptr<arrow::Schema> input_schema_;
 };
 
 }  // namespace shuffle
