@@ -21,7 +21,7 @@ import java.io.File
 import java.nio.file.Files
 
 import com.intel.oap.expression.ConverterUtils
-import com.intel.oap.vectorized.ArrowWritableColumnVector
+import com.intel.oap.vectorized.{ArrowWritableColumnVector, NativePartitioning}
 import org.apache.arrow.memory.RootAllocator
 import org.apache.arrow.vector.ipc.ArrowStreamReader
 import org.apache.arrow.vector.types.pojo.{ArrowType, Field, Schema}
@@ -83,7 +83,12 @@ class ColumnarShuffleWriterSuite extends SharedSparkSession {
 
     when(dependency.partitioner).thenReturn(new HashPartitioner(11))
     when(dependency.serializer).thenReturn(new JavaSerializer(sparkConf))
-    when(dependency.serializedSchema).thenReturn(ConverterUtils.getSchemaBytesBuf(schema))
+    when(dependency.nativePartitioning).thenReturn(
+      new NativePartitioning(
+        "rr",
+        dependency.partitioner.numPartitions,
+        ConverterUtils.getSchemaBytesBuf(schema),
+        Array[Byte]()))
     when(dependency.dataSize)
       .thenReturn(SQLMetrics.createSizeMetric(spark.sparkContext, "data size"))
     when(dependency.splitTime)

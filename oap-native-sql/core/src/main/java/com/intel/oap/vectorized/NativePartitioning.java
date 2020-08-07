@@ -31,6 +31,7 @@ public class NativePartitioning implements Serializable {
   public NativePartitioning(String shortName, int numPartitions, byte[] serialzedSchema, byte[] serializedExprList) {
     this.shortName = shortName;
     this.numPartitions = numPartitions;
+    this.serializedSchema = serialzedSchema;
     this.serializedExprList = serializedExprList;
   }
 
@@ -46,6 +47,9 @@ public class NativePartitioning implements Serializable {
     return numPartitions;
   }
 
+  public byte[] getSerializedSchema() {
+    return serializedSchema;
+  }
   public byte[] getSerializedExprList() {
     return serializedExprList;
   }

@@ -83,7 +83,7 @@ class SmallDataRepartitionSuite extends RepartitionSuite {
     withRepartition(df => df.repartition('id))
   }
 
-  ignore("test range partitioning") {
+  test("test range partitioning") {
     withRepartition(df => df.repartitionByRange('id))
   }
 
@@ -118,7 +118,7 @@ class TPCHTableRepartitionSuite extends RepartitionSuite {
     withRepartition(df => df.repartition('n_nationkey))
   }
 
-  ignore("test tpch range partitioning") {
+  test("test tpch range partitioning") {
     withRepartition(df => df.repartitionByRange('n_name))
   }
 

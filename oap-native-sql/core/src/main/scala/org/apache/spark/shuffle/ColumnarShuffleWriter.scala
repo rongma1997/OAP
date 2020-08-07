@@ -55,11 +55,15 @@ class ColumnarShuffleWriter[K, V](
 
   private var mapStatus: MapStatus = _
 
-  private val transeferToEnabled = conf.getBoolean("spark.file.transferTo", true)
-  private val compressionEnabled = conf.getBoolean("spark.shuffle.compress", true)
-  private val compressionCodec = conf.get("spark.io.compression.codec", "lz4")
   private val nativeBufferSize =
     conf.getInt("spark.sql.execution.arrow.maxRecordsPerBatch", 4096)
+  private val localDirs = Utils.getConfiguredLocalDirs(conf).mkString(",")
+  private val transeferToEnabled = conf.getBoolean("spark.file.transferTo", true)
+  private val compressionCodec = if (conf.getBoolean("spark.shuffle.compress", true)) {
+    conf.get("spark.io.compression.codec", "lz4")
+  } else {
+    "uncompressed"
+  }
 
   private val jniWrapper = new ShuffleSplitterJniWrapper()
 
@@ -79,22 +83,8 @@ class ColumnarShuffleWriter[K, V](
     }
 
     if (nativeSplitter == 0) {
-      val localDirs = Utils.getConfiguredLocalDirs(conf).mkString(",")
-      nativeSplitter = if (compressionEnabled) {
-        jniWrapper.make(
-          dep.serializedSchema,
-          nativeBufferSize,
-          localDirs,
-          compressionCodec,
-          dep.nativePartitioning)
-      } else {
-        jniWrapper.make(
-          dep.serializedSchema,
-          nativeBufferSize,
-          localDirs,
-          "uncompressed",
-          dep.nativePartitioning)
-      }
+      nativeSplitter =
+        jniWrapper.make(dep.nativePartitioning, nativeBufferSize, localDirs, compressionCodec)
     }
 
     while (records.hasNext) {
