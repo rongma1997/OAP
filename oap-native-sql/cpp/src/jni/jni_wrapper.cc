@@ -1109,9 +1109,9 @@ Java_com_intel_oap_datasource_parquet_ParquetWriterJniWrapper_nativeWriteNext(
 
 JNIEXPORT jlong JNICALL
 Java_com_intel_oap_vectorized_ShuffleSplitterJniWrapper_nativeMake(
-    JNIEnv* env, jobject, jbyteArray schema_arr, jint buffer_size,
-    jstring local_dirs_jstr, jstring codec_jstr, jstring partitioning_name_jstr,
-    jint num_partitions, jbyteArray expr_arr) {
+    JNIEnv* env, jobject, jstring partitioning_name_jstr, jint num_partitions,
+    jbyteArray schema_arr, jbyteArray expr_arr, jint buffer_size, jstring local_dirs_jstr,
+    jstring codec_jstr) {
   std::shared_ptr<arrow::Schema> schema;
 
   auto status = MakeSchema(env, schema_arr, &schema);

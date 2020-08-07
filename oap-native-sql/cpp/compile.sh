@@ -11,7 +11,7 @@ if [ -d build ]; then
 fi
 mkdir build
 cd build
-cmake -DDEBUG=ON ..
+cmake ..
 make
 
 set +eu

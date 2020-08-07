@@ -170,41 +170,46 @@ object ColumnarShuffleExchangeExec extends Logging {
         .nullable(s"${attr.name}#${attr.exprId.id}", CodeGeneration.getResultType(attr.dataType))
     })
 
+    def serializeSchema(fields: Seq[Field]): Array[Byte] = {
+      val schema = new Schema(fields.asJava)
+      ConverterUtils.getSchemaBytesBuf(schema)
+    }
+
+    // only used for fallback range partitioning
+    val rangePartitioner: Option[Partitioner] = newPartitioning match {
+      case RangePartitioning(sortingExpressions, numPartitions) =>
+        // Extract only fields used for sorting to avoid collecting large fields that does not
+        // affect sorting result when deciding partition bounds in RangePartitioner
+        val rddForSampling = rdd.mapPartitionsInternal { iter =>
+          // Internally, RangePartitioner runs a job on the RDD that samples keys to compute
+          // partition bounds. To get accurate samples, we need to copy the mutable keys.
+          iter.flatMap(batch => {
+            val rows = batch.rowIterator.asScala
+            val projection =
+              UnsafeProjection.create(sortingExpressions.map(_.child), outputAttributes)
+            val mutablePair = new MutablePair[InternalRow, Null]()
+            rows.map(row => mutablePair.update(projection(row).copy(), null))
+          })
+        }
+        // Construct ordering on extracted sort key.
+        val orderingAttributes = sortingExpressions.zipWithIndex.map {
+          case (ord, i) =>
+            ord.copy(child = BoundReference(i, ord.dataType, ord.nullable))
+        }
+        implicit val ordering = new LazilyGeneratedOrdering(orderingAttributes)
+        val part = new RangePartitioner(
+          numPartitions,
+          rddForSampling,
+          ascending = true,
+          samplePointsPerPartitionHint = SQLConf.get.rangeExchangeSampleSizePerPartition)
+        Some(part)
+      case _ => None
+    }
+
     // only used for fallback range partitioning
     def computeAndAddPartitionId(
         cbIter: Iterator[ColumnarBatch],
         partitionKeyExtractor: InternalRow => Any): CloseablePairedColumnarBatchIterator = {
-      val rangePartitioner: Partitioner = newPartitioning match {
-        case RangePartitioning(sortingExpressions, numPartitions) =>
-          // Extract only fields used for sorting to avoid collecting large fields that does not
-          // affect sorting result when deciding partition bounds in RangePartitioner
-          val rddForSampling = rdd.mapPartitionsInternal { iter =>
-            // Internally, RangePartitioner runs a job on the RDD that samples keys to compute
-            // partition bounds. To get accurate samples, we need to copy the mutable keys.
-            iter.flatMap(batch => {
-              val rows = batch.rowIterator.asScala
-              val projection =
-                UnsafeProjection.create(sortingExpressions.map(_.child), outputAttributes)
-              val mutablePair = new MutablePair[InternalRow, Null]()
-              rows.map(row => mutablePair.update(projection(row).copy(), null))
-            })
-          }
-          // Construct ordering on extracted sort key.
-          val orderingAttributes = sortingExpressions.zipWithIndex.map {
-            case (ord, i) =>
-              ord.copy(child = BoundReference(i, ord.dataType, ord.nullable))
-          }
-          implicit val ordering = new LazilyGeneratedOrdering(orderingAttributes)
-          val part = new RangePartitioner(
-            numPartitions,
-            rddForSampling,
-            ascending = true,
-            samplePointsPerPartitionHint = SQLConf.get.rangeExchangeSampleSizePerPartition)
-        case _ =>
-          throw new UnsupportedOperationException(
-            s"Can't get RangPartitioner: ${newPartitioning.toString}")
-      }
-
       CloseablePairedColumnarBatchIterator {
         cbIter
           .filter(cb => cb.numRows != 0 && cb.numCols != 0)
@@ -213,21 +218,18 @@ object ColumnarShuffleExchangeExec extends Logging {
             val pidVec = ArrowWritableColumnVector
               .allocateColumns(cb.numRows, new StructType().add("pid", IntegerType))
               .head
-            (0 until cb.numRows).map { i =>
+            (0 until cb.numRows).foreach { i =>
               val row = cb.getRow(i)
-              val pid = rangePartitioner.getPartition(partitionKeyExtractor(row))
-              pidVec.appendInt(pid)
+              val pid = rangePartitioner.get.getPartition(partitionKeyExtractor(row))
+              pidVec.putInt(i, pid)
             }
+            pidVec.getValueVector.setValueCount(cb.numRows)
+
             val newVectors = (pidVec +: (0 until cb.numCols).map(cb.column)).toArray
             computePidTime.add(System.nanoTime() - startTime)
             (0, new ColumnarBatch(newVectors, cb.numRows))
           }
       }
-    }
-
-    def serializeSchema(fields: Seq[Field]): Array[Byte] = {
-      val schema = new Schema(fields.asJava)
-      ConverterUtils.getSchemaBytesBuf(schema)
     }
 
     val nativePartitioning: NativePartitioning = newPartitioning match {
