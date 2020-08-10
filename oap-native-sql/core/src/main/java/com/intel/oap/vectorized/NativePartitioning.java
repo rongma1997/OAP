@@ -19,24 +19,33 @@ package com.intel.oap.vectorized;
 
 import java.io.Serializable;
 
-/**
- * Hold partitioning parameters needed by native splitter
- */
+/** POJO to hold partitioning parameters needed by native splitter */
 public class NativePartitioning implements Serializable {
-  String shortName;
-  int numPartitions;
-  byte[] serializedSchema;
-  byte[] serializedExprList;
 
-  public NativePartitioning(String shortName, int numPartitions, byte[] serialzedSchema, byte[] serializedExprList) {
+  private final String shortName;
+  private final int numPartitions;
+  private final byte[] schema;
+  private final byte[] exprList;
+
+  /**
+   * Constructs a new instance.
+   *
+   * @param shortName Partitioning short name. "single" -> SinglePartitioning, "rr" ->
+   *     RoundRobinPartitioning, "hash" -> HashPartitioning, "range" -> RangePartitioning
+   * @param numPartitions Partitioning numPartitions
+   * @param schema Serialized arrow schema
+   * @param exprList Serialized gandiva expressions
+   */
+  public NativePartitioning(
+          String shortName, int numPartitions, byte[] schema, byte[] exprList) {
     this.shortName = shortName;
     this.numPartitions = numPartitions;
-    this.serializedSchema = serialzedSchema;
-    this.serializedExprList = serializedExprList;
+    this.schema = schema;
+    this.exprList = exprList;
   }
 
-  public NativePartitioning(String shortName, int numPartitions, byte[] serializedSchema) {
-    this(shortName, numPartitions, serializedSchema, null);
+  public NativePartitioning(String shortName, int numPartitions, byte[] schema) {
+    this(shortName, numPartitions, schema, null);
   }
 
   public String getShortName() {
@@ -47,10 +56,11 @@ public class NativePartitioning implements Serializable {
     return numPartitions;
   }
 
-  public byte[] getSerializedSchema() {
-    return serializedSchema;
+  public byte[] getSchema() {
+    return schema;
   }
-  public byte[] getSerializedExprList() {
-    return serializedExprList;
+
+  public byte[] getExprList() {
+    return exprList;
   }
 }

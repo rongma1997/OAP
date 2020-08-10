@@ -148,7 +148,7 @@ class ColumnarShuffleWriter[K, V](
         try {
           splitResult.getPartitionFileInfo.foreach { fileInfo =>
             {
-              val pid = fileInfo.getPid
+              val pid = fileInfo.getPartitionId
               val file = new File(fileInfo.getFilePath)
               if (file.exists()) {
                 if (!file.delete()) {
@@ -176,7 +176,7 @@ class ColumnarShuffleWriter[K, V](
     try {
       splitResult.getPartitionFileInfo.foreach { fileInfo =>
         {
-          val pid = fileInfo.getPid
+          val pid = fileInfo.getPartitionId
           val filePath = fileInfo.getFilePath
 
           val file = new File(filePath)

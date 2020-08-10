@@ -223,11 +223,12 @@ object ColumnarShuffleExchangeExec extends Logging {
               val pid = rangePartitioner.get.getPartition(partitionKeyExtractor(row))
               pidVec.putInt(i, pid)
             }
-            pidVec.getValueVector.setValueCount(cb.numRows)
 
-            val newVectors = (pidVec +: (0 until cb.numCols).map(cb.column)).toArray
+            val newColumns = (pidVec +: (0 until cb.numCols).map(cb.column)).toArray
+            newColumns.foreach(
+              _.asInstanceOf[ArrowWritableColumnVector].getValueVector.setValueCount(cb.numRows))
             computePidTime.add(System.nanoTime() - startTime)
-            (0, new ColumnarBatch(newVectors, cb.numRows))
+            (0, new ColumnarBatch(newColumns, cb.numRows))
           }
       }
     }
@@ -258,7 +259,7 @@ object ColumnarShuffleExchangeExec extends Logging {
           ConverterUtils.getExprListBytesBuf(gandivaExprs.toList))
       // range partitioning fall back to row-based partition id computation
       case RangePartitioning(orders, n) =>
-        val pidField = Field.nullable("res", new ArrowType.Int(32, true))
+        val pidField = Field.nullable("pid", new ArrowType.Int(32, true))
         new NativePartitioning("range", n, serializeSchema(pidField +: arrowFields))
     }
 
@@ -294,6 +295,11 @@ object ColumnarShuffleExchangeExec extends Logging {
         rdd.mapPartitionsWithIndexInternal(
           (_, cbIter) =>
             cbIter.map { cb =>
+              (0 until cb.numCols).foreach(
+                cb.column(_)
+                  .asInstanceOf[ArrowWritableColumnVector]
+                  .getValueVector
+                  .setValueCount(cb.numRows))
               (0, cb)
           },
           isOrderSensitive = isOrderSensitive)

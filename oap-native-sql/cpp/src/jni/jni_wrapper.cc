@@ -1166,7 +1166,7 @@ Java_com_intel_oap_vectorized_ShuffleSplitterJniWrapper_nativeMake(
     }
     make_result =
         Splitter::Make(partitioning_name, std::move(schema), (int32_t)num_partitions,
-                       std::move(expr_vector), std::move(ret_types));
+                       std::move(expr_vector));
   } else {
     make_result =
         Splitter::Make(partitioning_name, std::move(schema), (int32_t)num_partitions);
