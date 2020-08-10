@@ -114,6 +114,7 @@ class ColumnarShuffleWriter[K, V](
 
     val startTime = System.nanoTime()
     splitResult = jniWrapper.stop(nativeSplitter)
+    dep.computePidTime.add(splitResult.getTotalSplitTime)
     dep.splitTime.add(System.nanoTime() - startTime - splitResult.getTotalWriteTime)
     writeMetrics.incBytesWritten(splitResult.getTotalBytesWritten)
 
@@ -206,10 +207,6 @@ class ColumnarShuffleWriter[K, V](
       Closeables.close(out, threwException)
       val writeTime = System.nanoTime - writerStartTime + splitResult.getTotalWriteTime
       writeMetrics.incWriteTime(writeTime)
-
-      // merge into total time
-      dep.totalTime.add(writeTime)
-      dep.totalTime.merge(dep.splitTime)
     }
     lengths
   }

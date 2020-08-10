@@ -17,30 +17,37 @@
 
 package com.intel.oap.vectorized;
 
-/**
- * POJO to hold native split result
- */
+/** POJO to hold native split result */
 public class SplitResult {
-    private final long totalWriteTime;
-    private final long totalBytesWritten;
-    private final PartitionFileInfo[] partitionFileInfo;
+  private final long totalSplitTime;
+  private final long totalWriteTime;
+  private final long totalBytesWritten;
+  private final PartitionFileInfo[] partitionFileInfo;
 
-    public SplitResult(
-            long totalWriteTime, long totalBytesWritten, PartitionFileInfo[] partitionFileInfo) {
-        this.totalWriteTime = totalWriteTime;
-        this.totalBytesWritten = totalBytesWritten;
-        this.partitionFileInfo = partitionFileInfo;
-    }
+  public SplitResult(
+      long totalSplitTime,
+      long totalWriteTime,
+      long totalBytesWritten,
+      PartitionFileInfo[] partitionFileInfo) {
+    this.totalSplitTime = totalSplitTime;
+    this.totalWriteTime = totalWriteTime;
+    this.totalBytesWritten = totalBytesWritten;
+    this.partitionFileInfo = partitionFileInfo;
+  }
 
-    public long getTotalWriteTime() {
-        return totalWriteTime;
-    }
+  public long getTotalSplitTime() {
+    return totalSplitTime;
+  }
 
-    public long getTotalBytesWritten() {
-        return totalBytesWritten;
-    }
+  public long getTotalWriteTime() {
+    return totalWriteTime;
+  }
 
-    public PartitionFileInfo[] getPartitionFileInfo() {
-        return partitionFileInfo;
-    }
+  public long getTotalBytesWritten() {
+    return totalBytesWritten;
+  }
+
+  public PartitionFileInfo[] getPartitionFileInfo() {
+    return partitionFileInfo;
+  }
 }

@@ -88,9 +88,9 @@ class ColumnarShuffleWriterSuite extends SharedSparkSession {
     when(dependency.dataSize)
       .thenReturn(SQLMetrics.createSizeMetric(spark.sparkContext, "data size"))
     when(dependency.splitTime)
-      .thenReturn(SQLMetrics.createNanoTimingMetric(spark.sparkContext, "split time"))
-    when(dependency.totalTime)
-      .thenReturn(SQLMetrics.createNanoTimingMetric(spark.sparkContext, "totaltime_shufflewrite"))
+      .thenReturn(SQLMetrics.createNanoTimingMetric(spark.sparkContext, "totaltime_split"))
+    when(dependency.computePidTime)
+      .thenReturn(SQLMetrics.createNanoTimingMetric(spark.sparkContext, "totaltime_computepid"))
     when(taskContext.taskMetrics()).thenReturn(taskMetrics)
     when(blockResolver.getDataFile(0, 0)).thenReturn(outputFile)
 

@@ -70,9 +70,8 @@ class ColumnarShuffleExchangeExec(
     SQLShuffleReadMetricsReporter.createShuffleReadMetrics(sparkContext)
   override lazy val metrics: Map[String, SQLMetric] = Map(
     "dataSize" -> SQLMetrics.createSizeMetric(sparkContext, "data size"),
-    "splitTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "split time"),
-    "computePidTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "compute pid time"),
-    "totalTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "totaltime_shufflewrite"),
+    "computePidTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "totaltime_computepid"),
+    "splitTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "totaltime_split"),
     "avgReadBatchNumRows" -> SQLMetrics
       .createAverageMetric(sparkContext, "avg read batch num rows")) ++ readMetrics ++ writeMetrics
 
@@ -109,8 +108,7 @@ class ColumnarShuffleExchangeExec(
       writeMetrics,
       longMetric("dataSize"),
       longMetric("splitTime"),
-      longMetric("computePidTime"),
-      longMetric("totalTime"))
+      longMetric("computePidTime"))
   }
 
   private var cachedShuffleRDD: ShuffledColumnarBatchRDD = _
@@ -162,8 +160,7 @@ object ColumnarShuffleExchangeExec extends Logging {
       writeMetrics: Map[String, SQLMetric],
       dataSize: SQLMetric,
       splitTime: SQLMetric,
-      computePidTime: SQLMetric,
-      totalTime: SQLMetric): ShuffleDependency[Int, ColumnarBatch, ColumnarBatch] = {
+      computePidTime: SQLMetric): ShuffleDependency[Int, ColumnarBatch, ColumnarBatch] = {
 
     val arrowFields = outputAttributes.map(attr => {
       Field
@@ -285,7 +282,6 @@ object ColumnarShuffleExchangeExec extends Logging {
 
             TaskContext.get().addTaskCompletionListener[Unit] { _ =>
               newIter.closeAppendedVector()
-              totalTime.merge(computePidTime)
             }
 
             newIter
@@ -314,8 +310,7 @@ object ColumnarShuffleExchangeExec extends Logging {
         nativePartitioning = nativePartitioning,
         dataSize = dataSize,
         computePidTime = computePidTime,
-        splitTime = splitTime,
-        totalTime = totalTime)
+        splitTime = splitTime)
 
     dependency
   }

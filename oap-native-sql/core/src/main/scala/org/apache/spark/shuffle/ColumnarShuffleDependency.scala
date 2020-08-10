@@ -39,8 +39,10 @@ import scala.reflect.ClassTag
  * @param aggregator map/reduce-side aggregator for RDD's shuffle
  * @param mapSideCombine whether to perform partial aggregation (also known as map-side combine)
  * @param shuffleWriterProcessor the processor to control the write behavior in ShuffleMapTask
- * @param nativePartitioning hold partitioning parameters needed by native splitter
+ * @param nativePartitioning     hold partitioning parameters needed by native splitter
  * @param dataSize for shuffle data size tracking
+ * @param computePidTime partition id computation time metric
+ * @param splitTime native split time metric
  */
 class ColumnarShuffleDependency[K: ClassTag, V: ClassTag, C: ClassTag](
     @transient private val _rdd: RDD[_ <: Product2[K, V]],
@@ -53,8 +55,7 @@ class ColumnarShuffleDependency[K: ClassTag, V: ClassTag, C: ClassTag](
     val nativePartitioning: NativePartitioning,
     val dataSize: SQLMetric,
     val computePidTime: SQLMetric,
-    val splitTime: SQLMetric,
-    val totalTime: SQLMetric)
+    val splitTime: SQLMetric)
     extends ShuffleDependency[K, V, C](
       _rdd,
       partitioner,

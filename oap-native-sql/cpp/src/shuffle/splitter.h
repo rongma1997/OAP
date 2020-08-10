@@ -68,6 +68,8 @@ class Splitter {
 
   int64_t TotalWriteTime() const { return total_write_time_; }
 
+  int64_t TotalSplitTime() const { return total_split_time_; }
+
   virtual const std::vector<std::pair<int32_t, std::string>>& GetPartitionFileInfo()
       const {
     return partition_file_info_;
@@ -85,6 +87,7 @@ class Splitter {
 
   int64_t total_bytes_written_ = 0;
   int64_t total_write_time_ = 0;
+  int64_t total_split_time_ = 0;
 };
 
 class BasePartitionSplitter : public Splitter {
