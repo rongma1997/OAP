@@ -268,7 +268,8 @@ arrow::Status HashSplitter::CreateProjector() {
 arrow::Result<std::vector<std::shared_ptr<PartitionWriter>>>
 HashSplitter::GetNextBatchPartitionWriter(const arrow::RecordBatch& rb) {
   arrow::ArrayVector outputs;
-  RETURN_NOT_OK(projector_->Evaluate(rb, arrow::default_memory_pool(), &outputs));
+  TIME_MICRO_OR_RAISE(total_split_time_,
+                      projector_->Evaluate(rb, arrow::default_memory_pool(), &outputs));
   if (outputs.size() != 1) {
     return arrow::Status::Invalid("Projector result should have one field, actual is ",
                                   std::to_string(outputs.size()));
