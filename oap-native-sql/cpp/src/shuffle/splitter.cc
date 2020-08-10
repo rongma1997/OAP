@@ -30,84 +30,28 @@ namespace shuffle {
 
 arrow::Result<std::shared_ptr<Splitter>> Splitter::Make(
     const std::string& short_name, std::shared_ptr<arrow::Schema> schema,
-    int num_partitions, gandiva::ExpressionVector expr_vector,
-    gandiva::FieldVector field_vector) {
+    int num_partitions, gandiva::ExpressionVector expr_vector) {
   if (short_name == "hash") {
-    return HashSplitter::Create(num_partitions, std::move(schema), std::move(expr_vector),
-                                std::move(field_vector));
+    return HashSplitter::Create(num_partitions, std::move(schema),
+                                std::move(expr_vector));
   } else if (short_name == "rr") {
     return RoundRobinSplitter::Create(num_partitions, std::move(schema));
   } else if (short_name == "range") {
     return FallbackRangeSplitter::Create(num_partitions, std::move(schema));
   } else if (short_name == "single") {
-    return SingleSplitter::Create(std::move(schema));
-  } else {
-    return arrow::Status::NotImplemented("Partitioning " + short_name +
-                                         " not supported yet.");
+    return RoundRobinSplitter::Create(1, std::move(schema));
   }
+  return arrow::Status::NotImplemented("Partitioning " + short_name +
+                                       " not supported yet.");
 }
 
 arrow::Result<std::shared_ptr<Splitter>> Splitter::Make(
     const std::string& short_name, std::shared_ptr<arrow::Schema> schema,
     int num_partitions) {
-  return Make(short_name, std::move(schema), num_partitions, {}, {});
+  return Make(short_name, std::move(schema), num_partitions, {});
 }
 
 Splitter::~Splitter() = default;
-
-// ----------------------------------------------------------------------
-// SingleSplitter
-
-SingleSplitter::SingleSplitter(std::shared_ptr<arrow::Schema> schema,
-                               std::string output_file_path)
-    : Splitter(std::move(schema)), file_path_(std::move(output_file_path)) {}
-
-arrow::Result<std::shared_ptr<SingleSplitter>> SingleSplitter::Create(
-    std::shared_ptr<arrow::Schema> schema) {
-  ARROW_ASSIGN_OR_RAISE(auto configured_dirs, GetConfiguredLocalDirs());
-
-  // Pick a configured local dir randomly
-  std::random_device rd;
-  std::mt19937 gen(rd());
-  std::uniform_int_distribution<> distrib(0, configured_dirs.size() - 1);
-  int pos = distrib(gen);
-
-  ARROW_ASSIGN_OR_RAISE(auto dir, CreateRandomSubDir(configured_dirs[pos]))
-  auto file_path = arrow::fs::internal::ConcatAbstractPath(dir, "data");
-
-  std::shared_ptr<SingleSplitter> splitter(
-      new SingleSplitter(std::move(schema), std::move(file_path)));
-
-  return splitter;
-}
-
-arrow::Status SingleSplitter::Split(const arrow::RecordBatch& rb) {
-  if (!file_os_opened_) {
-    ARROW_ASSIGN_OR_RAISE(file_os_, arrow::io::FileOutputStream::Open(file_path_, true))
-    file_os_opened_ = true;
-  }
-  if (!file_writer_opened_) {
-    ARROW_ASSIGN_OR_RAISE(
-        file_writer_, arrow::ipc::NewStreamWriter(file_os_.get(), schema_,
-                                                  GetIpcWriteOptions(compression_type_)))
-    file_writer_opened_ = true;
-  }
-
-  TIME_MICRO_OR_RAISE(total_write_time_, file_writer_->WriteRecordBatch(rb));
-  return arrow::Status::OK();
-}
-
-arrow::Status SingleSplitter::Stop() {
-  if (!file_os_->closed()) {
-    ARROW_ASSIGN_OR_RAISE(total_bytes_written_, file_os_->Tell());
-    file_os_->Close();
-  }
-  if (file_writer_opened_) {
-    file_writer_->Close();
-  }
-  partition_file_info_ =
-      std::vector<std::pair<int32_t, std::string>>{std::make_pair(0, file_path_)};
-}
 
 // ----------------------------------------------------------------------
 // BasePartitionSplitter
@@ -226,14 +170,12 @@ arrow::Status BasePartitionSplitter::DoSplit(
 }
 
 arrow::Status BasePartitionSplitter::Stop() {
-  int64_t total_bytes = 0;
-  int64_t total_time = 0;
   for (const auto& writer : partition_writer_) {
     if (writer != nullptr) {
       RETURN_NOT_OK(writer->Stop());
       ARROW_ASSIGN_OR_RAISE(auto b, writer->GetBytesWritten());
-      total_bytes += b;
-      total_time += writer->GetWriteTime();
+      total_bytes_written_ += b;
+      total_write_time_ += writer->GetWriteTime();
     }
   }
   std::sort(std::begin(partition_file_info_), std::end(partition_file_info_));
@@ -273,7 +215,7 @@ RoundRobinSplitter::GetNextBatchPartitionWriter(const arrow::RecordBatch& rb) {
   for (auto i = 0; i < num_rows; ++i) {
     if (partition_writer_[pid_selection_] == nullptr) {
       ARROW_ASSIGN_OR_RAISE(auto file_path, CreateDataFile())
-      partition_file_info_.push_back({pid_selection_, std::move(file_path)});
+      partition_file_info_.emplace_back(pid_selection_, std::move(file_path));
 
       ARROW_ASSIGN_OR_RAISE(
           partition_writer_[pid_selection_],
@@ -288,22 +230,58 @@ RoundRobinSplitter::GetNextBatchPartitionWriter(const arrow::RecordBatch& rb) {
 }
 
 // ----------------------------------------------------------------------
+// ProjectionSplitter
+
+arrow::Status ProjectionSplitter::Init() {
+  RETURN_NOT_OK(BasePartitionSplitter::Init());
+  RETURN_NOT_OK(CreateProjector());
+  return arrow::Status::OK();
+}
+
+// ----------------------------------------------------------------------
 // HashSplitter
+
+arrow::Result<std::shared_ptr<HashSplitter>> HashSplitter::Create(
+    int32_t num_partitions, std::shared_ptr<arrow::Schema> schema,
+    gandiva::ExpressionVector expr_vector) {
+  std::shared_ptr<HashSplitter> res(
+      new HashSplitter(num_partitions, std::move(schema), std::move(expr_vector)));
+  RETURN_NOT_OK(res->Init());
+  return res;
+}
+
+arrow::Status HashSplitter::CreateProjector() {
+  // same seed as spark's
+  auto hash = gandiva::TreeExprBuilder::MakeLiteral((int32_t)42);
+  for (const auto& expr : expr_vector_) {
+    if (!expr->result()->type()->Equals(arrow::null())) {
+      hash = gandiva::TreeExprBuilder::MakeFunction("hash32", {expr->root(), hash},
+                                                    arrow::int32());
+    }
+  }
+  auto hash_expr =
+      gandiva::TreeExprBuilder::MakeExpression(hash, arrow::field("pid", arrow::int32()));
+  RETURN_NOT_OK(gandiva::Projector::Make(schema_, {hash_expr}, &projector_));
+  return arrow::Status::OK();
+}
 
 arrow::Result<std::vector<std::shared_ptr<PartitionWriter>>>
 HashSplitter::GetNextBatchPartitionWriter(const arrow::RecordBatch& rb) {
   arrow::ArrayVector outputs;
   RETURN_NOT_OK(projector_->Evaluate(rb, arrow::default_memory_pool(), &outputs));
-  auto pid_array = outputs.at(0);
-  auto num_rows = rb.num_rows();
-  ARROW_CHECK_EQ(pid_array->length(), num_rows);
+  if (outputs.size() != 1) {
+    return arrow::Status::Invalid("Projector result should have one field, actual is ",
+                                  std::to_string(outputs.size()));
+  }
 
+  auto num_rows = rb.num_rows();
+  auto pid_arr = std::dynamic_pointer_cast<arrow::Int32Array>(outputs.at(0));
   std::vector<std::shared_ptr<PartitionWriter>> res;
   res.reserve(num_rows);
-  auto pid_arr = reinterpret_cast<const int32_t*>(pid_array->data()->buffers[1]->data());
   for (auto i = 0; i < num_rows; ++i) {
     // positive mod
-    auto pid = (pid_arr[i] % num_partitions_ + num_partitions_) % num_partitions_;
+    auto pid = pid_arr->Value(i) % num_partitions_;
+    if (pid < 0) pid = (pid + num_partitions_) % num_partitions_;
     if (partition_writer_[pid] == nullptr) {
       ARROW_ASSIGN_OR_RAISE(auto file_path, CreateDataFile())
       partition_file_info_.emplace_back(pid, std::move(file_path));
@@ -319,35 +297,8 @@ HashSplitter::GetNextBatchPartitionWriter(const arrow::RecordBatch& rb) {
   return res;
 }
 
-arrow::Result<std::shared_ptr<HashSplitter>> HashSplitter::Create(
-    int32_t num_partitions, std::shared_ptr<arrow::Schema> schema,
-    gandiva::ExpressionVector expr_vector, gandiva::FieldVector field_vector) {
-  std::shared_ptr<HashSplitter> res(new HashSplitter(num_partitions, std::move(schema),
-                                                     std::move(expr_vector),
-                                                     std::move(field_vector)));
-  RETURN_NOT_OK(res->Init());
-  return res;
-}
-
-arrow::Status HashSplitter::CreateProjector() {
-  // same seed as spark's
-  auto seed = gandiva::TreeExprBuilder::MakeLiteral((int32_t)42);
-  gandiva::NodePtr node = seed;
-  expr_vector_.reserve(field_vector_.size());
-
-  for (const auto& field : field_vector_) {
-    if (!field->type()->Equals(arrow::null())) {
-      auto field_ptr = gandiva::TreeExprBuilder::MakeField(field);
-      node = gandiva::TreeExprBuilder::MakeFunction("hash32", {field_ptr, node},
-                                                    arrow::int32());
-      auto expr = gandiva::TreeExprBuilder::MakeExpression(
-          node, arrow::field("pid", arrow::int32()));
-      expr_vector_.push_back(expr);
-    }
-  }
-  RETURN_NOT_OK(gandiva::Projector::Make(schema_, expr_vector_, &projector_));
-  return arrow::Status::OK();
-}
+// ----------------------------------------------------------------------
+// FallBackRangeSplitter
 
 arrow::Result<std::shared_ptr<FallbackRangeSplitter>> FallbackRangeSplitter::Create(
     int32_t num_partitions, std::shared_ptr<arrow::Schema> schema) {
@@ -377,11 +328,19 @@ FallbackRangeSplitter::GetNextBatchPartitionWriter(const arrow::RecordBatch& rb)
   std::vector<std::shared_ptr<PartitionWriter>> res;
   res.reserve(num_rows);
 
-  ARROW_CHECK_EQ(rb.column(0)->type_id(), arrow::Type::INT32);
+  if (rb.column(0)->type_id() != arrow::Type::INT32) {
+    return arrow::Status::Invalid("RecordBatch field 0 should be ",
+                                  arrow::int32()->ToString(), ", actual is ",
+                                  rb.column(0)->type()->ToString());
+  }
   auto pid_arr = reinterpret_cast<const int32_t*>(rb.column_data(0)->buffers[1]->data());
   for (auto i = 0; i < num_rows; ++i) {
     auto pid = pid_arr[i];
-    ARROW_CHECK_LT(pid, num_partitions_);
+    if (pid >= num_partitions_) {
+      return arrow::Status::Invalid("Partition id ", std::to_string(pid),
+                                    " is equal or greater than ",
+                                    std::to_string(num_partitions_));
+    }
     if (partition_writer_[pid] == nullptr) {
       ARROW_ASSIGN_OR_RAISE(auto file_path, CreateDataFile())
       partition_file_info_.emplace_back(pid, std::move(file_path));

@@ -40,8 +40,7 @@ class Splitter {
 
   static arrow::Result<std::shared_ptr<Splitter>> Make(
       const std::string& short_name, std::shared_ptr<arrow::Schema> schema,
-      int num_partitions, gandiva::ExpressionVector expr_vector,
-      gandiva::FieldVector field_vector);
+      int num_partitions, gandiva::ExpressionVector expr_vector);
 
   static arrow::Result<std::shared_ptr<Splitter>> Make(
       const std::string& short_name, std::shared_ptr<arrow::Schema> schema,
@@ -65,9 +64,9 @@ class Splitter {
    */
   virtual arrow::Status Stop() = 0;
 
-  int64_t TotalBytesWritten() { return total_bytes_written_; }
+  int64_t TotalBytesWritten() const { return total_bytes_written_; }
 
-  int64_t TotalWriteTime() { return total_write_time_; }
+  int64_t TotalWriteTime() const { return total_write_time_; }
 
   virtual const std::vector<std::pair<int32_t, std::string>>& GetPartitionFileInfo()
       const {
@@ -76,7 +75,7 @@ class Splitter {
 
  protected:
   Splitter() = default;
-  Splitter(std::shared_ptr<arrow::Schema> schema) : schema_(std::move(schema)) {}
+  explicit Splitter(std::shared_ptr<arrow::Schema> schema) : schema_(std::move(schema)) {}
 
   std::shared_ptr<arrow::Schema> schema_;
   arrow::Compression::type compression_type_ = arrow::Compression::UNCOMPRESSED;
@@ -86,29 +85,6 @@ class Splitter {
 
   int64_t total_bytes_written_ = 0;
   int64_t total_write_time_ = 0;
-};
-
-class SingleSplitter : public Splitter {
- public:
-  ~SingleSplitter() = default;
-
-  static arrow::Result<std::shared_ptr<SingleSplitter>> Create(
-      std::shared_ptr<arrow::Schema> schema);
-
-  arrow::Status Split(const arrow::RecordBatch& rb) override;
-
-  arrow::Status Stop() override;
-
- private:
-  SingleSplitter(std::shared_ptr<arrow::Schema> schema, std::string output_file_path);
-
-  const std::string file_path_;
-
-  bool file_os_opened_ = false;
-  std::shared_ptr<arrow::io::FileOutputStream> file_os_;
-
-  bool file_writer_opened_ = false;
-  std::shared_ptr<arrow::ipc::RecordBatchWriter> file_writer_;
 };
 
 class BasePartitionSplitter : public Splitter {
@@ -160,39 +136,32 @@ class RoundRobinSplitter : public BasePartitionSplitter {
   int32_t pid_selection_ = 0;
 };
 
-class BaseProjectionSplitter : public BasePartitionSplitter {
+class ProjectionSplitter : public BasePartitionSplitter {
  protected:
-  BaseProjectionSplitter() = default;
-  BaseProjectionSplitter(int32_t num_partitions, std::shared_ptr<arrow::Schema> schema,
-                         gandiva::ExpressionVector expr_vector,
-                         gandiva::FieldVector field_vector)
+  ProjectionSplitter(int32_t num_partitions, std::shared_ptr<arrow::Schema> schema,
+                     gandiva::ExpressionVector expr_vector)
       : BasePartitionSplitter(num_partitions, std::move(schema)),
-        expr_vector_(std::move(expr_vector)),
-        field_vector_(std::move(field_vector)) {}
+        expr_vector_(std::move(expr_vector)) {}
 
-  arrow::Status Init() override {
-    RETURN_NOT_OK(BasePartitionSplitter::Init());
-    RETURN_NOT_OK(CreateProjector());
-  }
+  arrow::Status Init() override;
 
   virtual arrow::Status CreateProjector() = 0;
 
   std::shared_ptr<gandiva::Projector> projector_;
   gandiva::ExpressionVector expr_vector_;
-  gandiva::FieldVector field_vector_;
 };
 
-class HashSplitter : public BaseProjectionSplitter {
+class HashSplitter : public ProjectionSplitter {
  public:
   static arrow::Result<std::shared_ptr<HashSplitter>> Create(
       int32_t num_partitions, std::shared_ptr<arrow::Schema> schema,
-      gandiva::ExpressionVector expr_vector, gandiva::FieldVector field_vector);
+      gandiva::ExpressionVector expr_vector);
 
  private:
   HashSplitter(int32_t num_partitions, std::shared_ptr<arrow::Schema> schema,
-               gandiva::ExpressionVector expr_vector, gandiva::FieldVector field_vector)
-      : BaseProjectionSplitter(num_partitions, std::move(schema), std::move(expr_vector),
-                               std::move(field_vector)) {}
+               gandiva::ExpressionVector expr_vector)
+      : ProjectionSplitter(num_partitions, std::move(schema),
+                           std::move(expr_vector)) {}
 
   arrow::Status CreateProjector() override;
 

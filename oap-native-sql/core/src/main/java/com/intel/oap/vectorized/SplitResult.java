@@ -17,10 +17,13 @@
 
 package com.intel.oap.vectorized;
 
+/**
+ * POJO to hold native split result
+ */
 public class SplitResult {
     private final long totalWriteTime;
     private final long totalBytesWritten;
-    PartitionFileInfo[] partitionFileInfo;
+    private final PartitionFileInfo[] partitionFileInfo;
 
     public SplitResult(
             long totalWriteTime, long totalBytesWritten, PartitionFileInfo[] partitionFileInfo) {

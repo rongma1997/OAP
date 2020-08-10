@@ -35,7 +35,7 @@ namespace detail {
 
 template <typename T>
 arrow::Status inline Write(const SrcBuffers& src, int64_t src_offset,
-                           const BufferMessages& dst, int64_t dst_offset) {
+                           const BufferInfos& dst, int64_t dst_offset) {
   for (size_t i = 0; i < src.size(); ++i) {
     dst[i]->validity_addr[dst_offset / 8] |=
         (((src[i].validity_addr)[src_offset / 8] >> (src_offset % 8)) & 1)
@@ -48,7 +48,7 @@ arrow::Status inline Write(const SrcBuffers& src, int64_t src_offset,
 
 template <>
 arrow::Status inline Write<bool>(const SrcBuffers& src, int64_t src_offset,
-                                 const BufferMessages& dst, int64_t dst_offset) {
+                                 const BufferInfos& dst, int64_t dst_offset) {
   for (size_t i = 0; i < src.size(); ++i) {
     dst[i]->validity_addr[dst_offset / 8] |=
         (((src[i].validity_addr)[src_offset / 8] >> (src_offset % 8)) & 1)
@@ -103,7 +103,7 @@ class PartitionWriter {
                            const std::shared_ptr<arrow::Schema>& schema,
                            std::string file_path,
                            std::shared_ptr<arrow::io::FileOutputStream> file,
-                           TypeBufferMessages buffers, BinaryBuilders binary_builders,
+                           TypeBufferInfos buffers, BinaryBuilders binary_builders,
                            LargeBinaryBuilders large_binary_builders,
                            arrow::Compression::type compression_codec)
       : pid_(pid),
@@ -269,7 +269,7 @@ class PartitionWriter {
   const std::string file_path_;
   std::shared_ptr<arrow::io::FileOutputStream> file_os_;
 
-  TypeBufferMessages buffers_;
+  TypeBufferInfos buffers_;
   BinaryBuilders binary_builders_;
   LargeBinaryBuilders large_binary_builders_;
 
