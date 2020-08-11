@@ -234,7 +234,7 @@ RoundRobinSplitter::GetNextBatchPartitionWriter(const arrow::RecordBatch& rb) {
 
 arrow::Status ProjectionSplitter::Init() {
   RETURN_NOT_OK(BasePartitionSplitter::Init());
-  RETURN_NOT_OK(CreateProjector());
+  TIME_MICRO_OR_RAISE(total_compute_pid_time_, CreateProjector());
   return arrow::Status::OK();
 }
 
@@ -268,7 +268,7 @@ arrow::Status HashSplitter::CreateProjector() {
 arrow::Result<std::vector<std::shared_ptr<PartitionWriter>>>
 HashSplitter::GetNextBatchPartitionWriter(const arrow::RecordBatch& rb) {
   arrow::ArrayVector outputs;
-  TIME_MICRO_OR_RAISE(total_split_time_,
+  TIME_MICRO_OR_RAISE(total_compute_pid_time_,
                       projector_->Evaluate(rb, arrow::default_memory_pool(), &outputs));
   if (outputs.size() != 1) {
     return arrow::Status::Invalid("Projector result should have one field, actual is ",

@@ -1232,8 +1232,8 @@ JNIEXPORT jobject JNICALL Java_com_intel_oap_vectorized_ShuffleSplitterJniWrappe
                       .c_str());
   }
 
-  // TotalSplitTime
-  auto split_time = static_cast<jlong>(splitter->TotalSplitTime());
+  // TotalComputePidTime
+  auto compute_pid_time = static_cast<jlong>(splitter->TotalComputePidTime());
 
   // TotalWriteTime
   auto write_time = static_cast<jlong>(splitter->TotalWriteTime());
@@ -1258,7 +1258,7 @@ JNIEXPORT jobject JNICALL Java_com_intel_oap_vectorized_ShuffleSplitterJniWrappe
 
   // build SplitResult
   jobject split_result =
-      env->NewObject(split_result_class, split_result_constructor, split_time, write_time,
+      env->NewObject(split_result_class, split_result_constructor, compute_pid_time, write_time,
                      bytes_written, partition_file_info_array);
 
   return split_result;
