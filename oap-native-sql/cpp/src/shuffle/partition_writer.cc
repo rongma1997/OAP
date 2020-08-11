@@ -83,7 +83,7 @@ arrow::Result<std::shared_ptr<PartitionWriter>> PartitionWriter::Create(
                         arrow::io::FileOutputStream::Open(temp_file_path, true));
 
   return std::make_shared<PartitionWriter>(
-      pid, capacity, last_type, column_type_id, schema, temp_file_path, std::move(file_os),
+      pid, capacity, last_type, column_type_id, schema, std::move(file_os),
       std::move(buffers), std::move(binary_bulders), std::move(large_binary_bulders),
       compression_type);
 }

@@ -101,8 +101,7 @@ class PartitionWriter {
   explicit PartitionWriter(int32_t pid, int64_t capacity, Type::typeId last_type,
                            const std::vector<Type::typeId>& column_type_id,
                            const std::shared_ptr<arrow::Schema>& schema,
-                           std::string file_path,
-                           std::shared_ptr<arrow::io::FileOutputStream> file,
+                           std::shared_ptr<arrow::io::FileOutputStream> file_os,
                            TypeBufferInfos buffers, BinaryBuilders binary_builders,
                            LargeBinaryBuilders large_binary_builders,
                            arrow::Compression::type compression_codec)
@@ -111,8 +110,7 @@ class PartitionWriter {
         last_type_(last_type),
         column_type_id_(column_type_id),
         schema_(schema),
-        file_path_(std::move(file_path)),
-        file_os_(std::move(file)),
+        file_os_(std::move(file_os)),
         buffers_(std::move(buffers)),
         binary_builders_(std::move(binary_builders)),
         large_binary_builders_(std::move(large_binary_builders)),
@@ -131,21 +129,9 @@ class PartitionWriter {
 
   arrow::Status Stop();
 
-  int32_t pid() { return pid_; }
-
-  int64_t capacity() { return capacity_; }
-
-  int64_t write_offset() { return write_offset_[last_type_]; }
-
-  Type::typeId last_type() { return last_type_; }
-
-  const std::string& file_path() const { return file_path_; }
-
-  int64_t file_footer() const { return file_footer_; }
+  arrow::Status WriteArrowRecordBatch();
 
   uint64_t GetWriteTime() const { return write_time_; }
-
-  arrow::Status WriteArrowRecordBatch();
 
   arrow::Result<int64_t> GetBytesWritten() {
     if (!file_os_->closed()) {
@@ -266,7 +252,6 @@ class PartitionWriter {
   const Type::typeId last_type_;
   const std::vector<Type::typeId>& column_type_id_;
   const std::shared_ptr<arrow::Schema>& schema_;
-  const std::string file_path_;
   std::shared_ptr<arrow::io::FileOutputStream> file_os_;
 
   TypeBufferInfos buffers_;

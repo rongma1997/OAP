@@ -30,10 +30,9 @@ namespace shuffle {
 
 arrow::Result<std::shared_ptr<Splitter>> Splitter::Make(
     const std::string& short_name, std::shared_ptr<arrow::Schema> schema,
-    int num_partitions, gandiva::ExpressionVector expr_vector) {
+    int num_partitions, const gandiva::ExpressionVector& expr_vector) {
   if (short_name == "hash") {
-    return HashSplitter::Create(num_partitions, std::move(schema),
-                                std::move(expr_vector));
+    return HashSplitter::Create(num_partitions, std::move(schema), expr_vector);
   } else if (short_name == "rr") {
     return RoundRobinSplitter::Create(num_partitions, std::move(schema));
   } else if (short_name == "range") {
@@ -75,8 +74,8 @@ arrow::Status BasePartitionSplitter::Init() {
   return arrow::Status::OK();
 }
 
-arrow::Status BasePartitionSplitter::DoSplit(
-    const arrow::RecordBatch& rb, std::vector<std::shared_ptr<PartitionWriter>> writers) {
+arrow::Status BasePartitionSplitter::DoSplit(const arrow::RecordBatch& rb,
+                                             std::vector<int32_t> writer_idx) {
   auto num_rows = rb.num_rows();
   auto num_cols = rb.num_columns();
   auto src_addr = std::vector<SrcBuffers>(Type::NUM_TYPES);
@@ -127,25 +126,26 @@ arrow::Status BasePartitionSplitter::DoSplit(
 
   auto read_offset = 0;
 
-#define WRITE_FIXEDWIDTH(TYPE_ID, T)                                             \
-  if (!src_addr[TYPE_ID].empty()) {                                              \
-    for (i = read_offset; i < num_rows; ++i) {                                   \
-      ARROW_ASSIGN_OR_RAISE(auto result,                                         \
-                            writers[i]->Write<T>(TYPE_ID, src_addr[TYPE_ID], i)) \
-      if (!result) {                                                             \
-        break;                                                                   \
-      }                                                                          \
-    }                                                                            \
+#define WRITE_FIXEDWIDTH(TYPE_ID, T)                                                 \
+  if (!src_addr[TYPE_ID].empty()) {                                                  \
+    for (i = read_offset; i < num_rows; ++i) {                                       \
+      ARROW_ASSIGN_OR_RAISE(auto result, partition_writer_[writer_idx[i]]->Write<T>( \
+                                             TYPE_ID, src_addr[TYPE_ID], i))         \
+      if (!result) {                                                                 \
+        break;                                                                       \
+      }                                                                              \
+    }                                                                                \
   }
 
-#define WRITE_BINARY(func, T, src_arr)                                 \
-  if (!src_arr.empty()) {                                              \
-    for (i = read_offset; i < num_rows; ++i) {                         \
-      ARROW_ASSIGN_OR_RAISE(auto result, writers[i]->func(src_arr, i)) \
-      if (!result) {                                                   \
-        break;                                                         \
-      }                                                                \
-    }                                                                  \
+#define WRITE_BINARY(func, T, src_arr)                                          \
+  if (!src_arr.empty()) {                                                       \
+    for (i = read_offset; i < num_rows; ++i) {                                  \
+      ARROW_ASSIGN_OR_RAISE(auto result,                                        \
+                            partition_writer_[writer_idx[i]]->func(src_arr, i)) \
+      if (!result) {                                                            \
+        break;                                                                  \
+      }                                                                         \
+    }                                                                           \
   }
 
   while (read_offset < num_rows) {
@@ -190,7 +190,7 @@ arrow::Result<std::string> BasePartitionSplitter::CreateDataFile() {
 }
 
 arrow::Status BasePartitionSplitter::Split(const arrow::RecordBatch& rb) {
-  ARROW_ASSIGN_OR_RAISE(auto writers, GetNextBatchPartitionWriter(rb));
+  ARROW_ASSIGN_OR_RAISE(auto writers, GetNextBatchPartitionWriterIndex(rb));
   RETURN_NOT_OK(DoSplit(rb, std::move(writers)));
   return arrow::Status::OK();
 }
@@ -206,11 +206,11 @@ arrow::Result<std::shared_ptr<RoundRobinSplitter>> RoundRobinSplitter::Create(
   return res;
 }
 
-arrow::Result<std::vector<std::shared_ptr<PartitionWriter>>>
-RoundRobinSplitter::GetNextBatchPartitionWriter(const arrow::RecordBatch& rb) {
+arrow::Result<std::vector<int>> RoundRobinSplitter::GetNextBatchPartitionWriterIndex(
+    const arrow::RecordBatch& rb) {
   auto num_rows = rb.num_rows();
 
-  std::vector<std::shared_ptr<PartitionWriter>> res;
+  std::vector<int32_t> res;
   res.reserve(num_rows);
   for (auto i = 0; i < num_rows; ++i) {
     if (partition_writer_[pid_selection_] == nullptr) {
@@ -223,19 +223,10 @@ RoundRobinSplitter::GetNextBatchPartitionWriter(const arrow::RecordBatch& rb) {
                                   column_type_id_, schema_,
                                   partition_file_info_.back().second, compression_type_));
     }
-    res.push_back(partition_writer_[pid_selection_]);
+    res.push_back(pid_selection_);
     pid_selection_ = (pid_selection_ + 1) % num_partitions_;
   }
   return res;
-}
-
-// ----------------------------------------------------------------------
-// ProjectionSplitter
-
-arrow::Status ProjectionSplitter::Init() {
-  RETURN_NOT_OK(BasePartitionSplitter::Init());
-  TIME_MICRO_OR_RAISE(total_compute_pid_time_, CreateProjector());
-  return arrow::Status::OK();
 }
 
 // ----------------------------------------------------------------------
@@ -243,17 +234,18 @@ arrow::Status ProjectionSplitter::Init() {
 
 arrow::Result<std::shared_ptr<HashSplitter>> HashSplitter::Create(
     int32_t num_partitions, std::shared_ptr<arrow::Schema> schema,
-    gandiva::ExpressionVector expr_vector) {
-  std::shared_ptr<HashSplitter> res(
-      new HashSplitter(num_partitions, std::move(schema), std::move(expr_vector)));
+    const gandiva::ExpressionVector& expr_vector) {
+  std::shared_ptr<HashSplitter> res(new HashSplitter(num_partitions, std::move(schema)));
   RETURN_NOT_OK(res->Init());
+  RETURN_NOT_OK(res->CreateProjector(expr_vector));
   return res;
 }
 
-arrow::Status HashSplitter::CreateProjector() {
+arrow::Status HashSplitter::CreateProjector(
+    const gandiva::ExpressionVector& expr_vector) {
   // same seed as spark's
   auto hash = gandiva::TreeExprBuilder::MakeLiteral((int32_t)42);
-  for (const auto& expr : expr_vector_) {
+  for (const auto& expr : expr_vector) {
     if (!expr->result()->type()->Equals(arrow::null())) {
       hash = gandiva::TreeExprBuilder::MakeFunction("hash32", {expr->root(), hash},
                                                     arrow::int32());
@@ -265,8 +257,8 @@ arrow::Status HashSplitter::CreateProjector() {
   return arrow::Status::OK();
 }
 
-arrow::Result<std::vector<std::shared_ptr<PartitionWriter>>>
-HashSplitter::GetNextBatchPartitionWriter(const arrow::RecordBatch& rb) {
+arrow::Result<std::vector<int32_t>> HashSplitter::GetNextBatchPartitionWriterIndex(
+    const arrow::RecordBatch& rb) {
   arrow::ArrayVector outputs;
   TIME_MICRO_OR_RAISE(total_compute_pid_time_,
                       projector_->Evaluate(rb, arrow::default_memory_pool(), &outputs));
@@ -277,7 +269,7 @@ HashSplitter::GetNextBatchPartitionWriter(const arrow::RecordBatch& rb) {
 
   auto num_rows = rb.num_rows();
   auto pid_arr = std::dynamic_pointer_cast<arrow::Int32Array>(outputs.at(0));
-  std::vector<std::shared_ptr<PartitionWriter>> res;
+  std::vector<int32_t> res;
   res.reserve(num_rows);
   for (auto i = 0; i < num_rows; ++i) {
     // positive mod
@@ -293,7 +285,7 @@ HashSplitter::GetNextBatchPartitionWriter(const arrow::RecordBatch& rb) {
                                   schema_, partition_file_info_.back().second,
                                   compression_type_))
     }
-    res.push_back(partition_writer_[pid]);
+    res.push_back(pid);
   }
   return res;
 }
@@ -317,16 +309,16 @@ arrow::Status FallbackRangeSplitter::Init() {
 }
 
 arrow::Status FallbackRangeSplitter::Split(const arrow::RecordBatch& rb) {
-  ARROW_ASSIGN_OR_RAISE(auto writers, GetNextBatchPartitionWriter(rb));
+  ARROW_ASSIGN_OR_RAISE(auto writers, GetNextBatchPartitionWriterIndex(rb));
   ARROW_ASSIGN_OR_RAISE(auto remove_pid, rb.RemoveColumn(0));
   RETURN_NOT_OK(DoSplit(*remove_pid, std::move(writers)));
   return arrow::Status::OK();
 }
 
-arrow::Result<std::vector<std::shared_ptr<PartitionWriter>>>
-FallbackRangeSplitter::GetNextBatchPartitionWriter(const arrow::RecordBatch& rb) {
+arrow::Result<std::vector<int32_t>>
+FallbackRangeSplitter::GetNextBatchPartitionWriterIndex(const arrow::RecordBatch& rb) {
   auto num_rows = rb.num_rows();
-  std::vector<std::shared_ptr<PartitionWriter>> res;
+  std::vector<int32_t> res;
   res.reserve(num_rows);
 
   if (rb.column(0)->type_id() != arrow::Type::INT32) {
@@ -352,7 +344,7 @@ FallbackRangeSplitter::GetNextBatchPartitionWriter(const arrow::RecordBatch& rb)
                                   schema_, partition_file_info_.back().second,
                                   compression_type_))
     }
-    res.push_back(partition_writer_[pid]);
+    res.push_back(pid);
   }
   return res;
 }

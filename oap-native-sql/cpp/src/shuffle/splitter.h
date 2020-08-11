@@ -40,7 +40,7 @@ class Splitter {
 
   static arrow::Result<std::shared_ptr<Splitter>> Make(
       const std::string& short_name, std::shared_ptr<arrow::Schema> schema,
-      int num_partitions, gandiva::ExpressionVector expr_vector);
+      int num_partitions, const gandiva::ExpressionVector& expr_vector);
 
   static arrow::Result<std::shared_ptr<Splitter>> Make(
       const std::string& short_name, std::shared_ptr<arrow::Schema> schema,
@@ -102,11 +102,11 @@ class BasePartitionSplitter : public Splitter {
 
   virtual arrow::Status Init();
 
-  virtual arrow::Result<std::vector<std::shared_ptr<PartitionWriter>>>
-  GetNextBatchPartitionWriter(const arrow::RecordBatch& rb) = 0;
+  virtual arrow::Result<std::vector<int32_t>>
+  GetNextBatchPartitionWriterIndex(const arrow::RecordBatch& rb) = 0;
 
   arrow::Status DoSplit(const arrow::RecordBatch& rb,
-                        std::vector<std::shared_ptr<PartitionWriter>> writers);
+                        std::vector<int32_t> writer_idx);
 
   arrow::Result<std::string> CreateDataFile();
 
@@ -129,8 +129,8 @@ class RoundRobinSplitter : public BasePartitionSplitter {
       int32_t num_partitions, std::shared_ptr<arrow::Schema> schema);
 
  protected:
-  arrow::Result<std::vector<std::shared_ptr<PartitionWriter>>>
-  GetNextBatchPartitionWriter(const arrow::RecordBatch& rb) override;
+  arrow::Result<std::vector<int32_t>>
+  GetNextBatchPartitionWriterIndex(const arrow::RecordBatch& rb) override;
 
  private:
   RoundRobinSplitter(int32_t num_partitions, std::shared_ptr<arrow::Schema> schema)
@@ -139,37 +139,22 @@ class RoundRobinSplitter : public BasePartitionSplitter {
   int32_t pid_selection_ = 0;
 };
 
-class ProjectionSplitter : public BasePartitionSplitter {
- protected:
-  ProjectionSplitter(int32_t num_partitions, std::shared_ptr<arrow::Schema> schema,
-                     gandiva::ExpressionVector expr_vector)
-      : BasePartitionSplitter(num_partitions, std::move(schema)),
-        expr_vector_(std::move(expr_vector)) {}
-
-  arrow::Status Init() override;
-
-  virtual arrow::Status CreateProjector() = 0;
-
-  std::shared_ptr<gandiva::Projector> projector_;
-  gandiva::ExpressionVector expr_vector_;
-};
-
-class HashSplitter : public ProjectionSplitter {
+class HashSplitter : public BasePartitionSplitter {
  public:
   static arrow::Result<std::shared_ptr<HashSplitter>> Create(
       int32_t num_partitions, std::shared_ptr<arrow::Schema> schema,
-      gandiva::ExpressionVector expr_vector);
+      const gandiva::ExpressionVector& expr_vector);
 
  private:
-  HashSplitter(int32_t num_partitions, std::shared_ptr<arrow::Schema> schema,
-               gandiva::ExpressionVector expr_vector)
-      : ProjectionSplitter(num_partitions, std::move(schema),
-                           std::move(expr_vector)) {}
+  HashSplitter(int32_t num_partitions, std::shared_ptr<arrow::Schema> schema)
+      : BasePartitionSplitter(num_partitions, std::move(schema)) {}
 
-  arrow::Status CreateProjector() override;
+  arrow::Status CreateProjector(const gandiva::ExpressionVector& expr_vector);
 
-  arrow::Result<std::vector<std::shared_ptr<PartitionWriter>>>
-  GetNextBatchPartitionWriter(const arrow::RecordBatch& rb) override;
+  arrow::Result<std::vector<int32_t>>
+  GetNextBatchPartitionWriterIndex(const arrow::RecordBatch& rb) override;
+
+  std::shared_ptr<gandiva::Projector> projector_;
 };
 
 class FallbackRangeSplitter : public BasePartitionSplitter {
@@ -187,8 +172,8 @@ class FallbackRangeSplitter : public BasePartitionSplitter {
 
   arrow::Status Init() override;
 
-  arrow::Result<std::vector<std::shared_ptr<PartitionWriter>>>
-  GetNextBatchPartitionWriter(const arrow::RecordBatch& rb) override;
+  arrow::Result<std::vector<int32_t>>
+  GetNextBatchPartitionWriterIndex(const arrow::RecordBatch& rb) override;
 
   std::shared_ptr<arrow::Schema> input_schema_;
 };
