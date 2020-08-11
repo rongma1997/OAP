@@ -67,9 +67,8 @@ class ColumnarShuffleExchangeExec(
     SQLShuffleReadMetricsReporter.createShuffleReadMetrics(sparkContext)
   override lazy val metrics: Map[String, SQLMetric] = Map(
     "dataSize" -> SQLMetrics.createSizeMetric(sparkContext, "data size"),
-    "splitTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "split time"),
-    "computePidTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "compute pid time"),
-    "totalTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "totaltime_shufflewrite"),
+    "splitTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "totaltime_split"),
+    "computePidTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "totaltime_computepid"),
     "avgReadBatchNumRows" -> SQLMetrics
       .createAverageMetric(sparkContext, "avg read batch num rows")) ++ readMetrics ++ writeMetrics
 
@@ -106,8 +105,7 @@ class ColumnarShuffleExchangeExec(
       writeMetrics,
       longMetric("dataSize"),
       longMetric("splitTime"),
-      longMetric("computePidTime"),
-      longMetric("totalTime"))
+      longMetric("computePidTime"))
   }
 
   private var cachedShuffleRDD: ShuffledColumnarBatchRDD = _
@@ -159,8 +157,8 @@ object ColumnarShuffleExchangeExec extends Logging {
       writeMetrics: Map[String, SQLMetric],
       dataSize: SQLMetric,
       splitTime: SQLMetric,
-      computePidTime: SQLMetric,
-      totalTime: SQLMetric): ShuffleDependency[Int, ColumnarBatch, ColumnarBatch] = {
+      computePidTime: SQLMetric):
+       ShuffleDependency[Int, ColumnarBatch, ColumnarBatch] = {
 
     val arrowSchema: Schema =
       ConverterUtils.toArrowSchema(
@@ -279,7 +277,6 @@ object ColumnarShuffleExchangeExec extends Logging {
 
           TaskContext.get().addTaskCompletionListener[Unit] { _ =>
             newIter.closeAppendedVector()
-            totalTime.merge(computePidTime)
           }
 
           newIter
@@ -295,8 +292,7 @@ object ColumnarShuffleExchangeExec extends Logging {
         shuffleWriterProcessor = createShuffleWriteProcessor(writeMetrics),
         serializedSchema = arrowSchema.toByteArray,
         dataSize = dataSize,
-        splitTime = splitTime,
-        totalTime = totalTime)
+        splitTime = splitTime)
 
     dependency
   }

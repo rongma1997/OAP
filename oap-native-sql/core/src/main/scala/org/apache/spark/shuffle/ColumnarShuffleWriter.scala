@@ -210,10 +210,6 @@ class ColumnarShuffleWriter[K, V](
       Closeables.close(out, threwException)
       val writeTime = System.nanoTime - writerStartTime + splitResult.getTotalWriteTime
       writeMetrics.incWriteTime(writeTime)
-
-      // merge into total time
-      dep.totalTime.add(writeTime)
-      dep.totalTime.merge(dep.splitTime)
     }
     lengths
   }

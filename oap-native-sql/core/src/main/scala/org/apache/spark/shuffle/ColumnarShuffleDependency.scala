@@ -51,8 +51,7 @@ class ColumnarShuffleDependency[K: ClassTag, V: ClassTag, C: ClassTag](
     override val shuffleWriterProcessor: ShuffleWriteProcessor = new ShuffleWriteProcessor,
     val serializedSchema: Array[Byte],
     val dataSize: SQLMetric,
-    val splitTime: SQLMetric,
-    val totalTime: SQLMetric)
+    val splitTime: SQLMetric)
     extends ShuffleDependency[K, V, C](
       _rdd,
       partitioner,
