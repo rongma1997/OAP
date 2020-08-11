@@ -48,12 +48,6 @@ class Splitter {
 
   virtual const std::shared_ptr<arrow::Schema>& schema() const { return schema_; }
 
-  void set_compression_type(arrow::Compression::type compression_type) {
-    compression_type_ = compression_type;
-  }
-
-  void set_buffer_size(int64_t buffer_size) { buffer_size_ = buffer_size; };
-
   virtual arrow::Status Split(const arrow::RecordBatch&) = 0;
 
   /***
@@ -68,12 +62,18 @@ class Splitter {
 
   int64_t TotalWriteTime() const { return total_write_time_; }
 
-  int64_t TotalSplitTime() const { return total_split_time_; }
+  int64_t TotalComputePidTime() const { return total_compute_pid_time_; }
 
   virtual const std::vector<std::pair<int32_t, std::string>>& GetPartitionFileInfo()
       const {
     return partition_file_info_;
   }
+
+  void set_compression_type(arrow::Compression::type compression_type) {
+    compression_type_ = compression_type;
+  }
+
+  void set_buffer_size(int64_t buffer_size) { buffer_size_ = buffer_size; };
 
  protected:
   Splitter() = default;
@@ -87,7 +87,7 @@ class Splitter {
 
   int64_t total_bytes_written_ = 0;
   int64_t total_write_time_ = 0;
-  int64_t total_split_time_ = 0;
+  int64_t total_compute_pid_time_ = 0;
 };
 
 class BasePartitionSplitter : public Splitter {
