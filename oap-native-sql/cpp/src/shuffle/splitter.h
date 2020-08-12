@@ -64,6 +64,8 @@ class Splitter {
 
   int64_t TotalComputePidTime() const { return total_compute_pid_time_; }
 
+  int64_t TotalSplitTime() const { return total_split_time_; }
+
   virtual const std::vector<std::pair<int32_t, std::string>>& GetPartitionFileInfo()
       const {
     return partition_file_info_;
@@ -88,6 +90,7 @@ class Splitter {
   int64_t total_bytes_written_ = 0;
   int64_t total_write_time_ = 0;
   int64_t total_compute_pid_time_ = 0;
+  int64_t total_split_time_ = 0;
 };
 
 class BasePartitionSplitter : public Splitter {
@@ -102,11 +105,10 @@ class BasePartitionSplitter : public Splitter {
 
   virtual arrow::Status Init();
 
-  virtual arrow::Result<std::vector<int32_t>>
-  GetNextBatchPartitionWriterIndex(const arrow::RecordBatch& rb) = 0;
+  virtual arrow::Result<std::vector<int32_t>> GetNextBatchPartitionWriterIndex(
+      const arrow::RecordBatch& rb) = 0;
 
-  arrow::Status DoSplit(const arrow::RecordBatch& rb,
-                        std::vector<int32_t> writer_idx);
+  arrow::Status DoSplit(const arrow::RecordBatch& rb, std::vector<int32_t> writer_idx);
 
   arrow::Result<std::string> CreateDataFile();
 
@@ -129,8 +131,8 @@ class RoundRobinSplitter : public BasePartitionSplitter {
       int32_t num_partitions, std::shared_ptr<arrow::Schema> schema);
 
  protected:
-  arrow::Result<std::vector<int32_t>>
-  GetNextBatchPartitionWriterIndex(const arrow::RecordBatch& rb) override;
+  arrow::Result<std::vector<int32_t>> GetNextBatchPartitionWriterIndex(
+      const arrow::RecordBatch& rb) override;
 
  private:
   RoundRobinSplitter(int32_t num_partitions, std::shared_ptr<arrow::Schema> schema)
@@ -151,8 +153,8 @@ class HashSplitter : public BasePartitionSplitter {
 
   arrow::Status CreateProjector(const gandiva::ExpressionVector& expr_vector);
 
-  arrow::Result<std::vector<int32_t>>
-  GetNextBatchPartitionWriterIndex(const arrow::RecordBatch& rb) override;
+  arrow::Result<std::vector<int32_t>> GetNextBatchPartitionWriterIndex(
+      const arrow::RecordBatch& rb) override;
 
   std::shared_ptr<gandiva::Projector> projector_;
 };
@@ -172,8 +174,8 @@ class FallbackRangeSplitter : public BasePartitionSplitter {
 
   arrow::Status Init() override;
 
-  arrow::Result<std::vector<int32_t>>
-  GetNextBatchPartitionWriterIndex(const arrow::RecordBatch& rb) override;
+  arrow::Result<std::vector<int32_t>> GetNextBatchPartitionWriterIndex(
+      const arrow::RecordBatch& rb) override;
 
   std::shared_ptr<arrow::Schema> input_schema_;
 };
