@@ -115,6 +115,7 @@ class Splitter::Impl {
   }
 
   arrow::Status Split(const arrow::RecordBatch& record_batch) {
+    auto start = std::chrono::steady_clock::now();
     const auto& pid_arr = record_batch.column_data(0);
     if (pid_arr->GetNullCount() != 0) {
       return arrow::Status::Invalid("Column partition id should not contain NULL value");
@@ -246,6 +247,10 @@ class Splitter::Impl {
       read_offset = i;
     }
 #undef WRITE_FIXEDWIDTH
+#undef WRITE_BINARY
+
+    auto end = std::chrono::steady_clock::now();
+    total_split_time_ += std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
 
     return arrow::Status::OK();
   }
@@ -254,26 +259,25 @@ class Splitter::Impl {
     // write final record batch
     for (const auto& writer : pid_writer_) {
       RETURN_NOT_OK(writer->Stop());
+      ARROW_ASSIGN_OR_RAISE(auto bytes, writer->BytesWritten());
+      total_bytes_written_ += bytes;
+      total_write_time_ += writer->write_time();
     }
+    total_split_time_ -= total_write_time_;
     std::sort(std::begin(temp_files), std::end(temp_files));
     return arrow::Status::OK();
   }
 
-  arrow::Result<int64_t> TotalBytesWritten() {
-    int64_t res = 0;
-    for (const auto& writer : pid_writer_) {
-      ARROW_ASSIGN_OR_RAISE(auto bytes, writer->BytesWritten());
-      res += bytes;
-    }
-    return res;
+  int64_t TotalBytesWritten() const {
+    return total_bytes_written_;
   }
 
-  uint64_t TotalWriteTime() {
-    uint64_t res = 0;
-    for (const auto& writer : pid_writer_) {
-      res += writer->write_time();
-    }
-    return res;
+  int64_t TotalWriteTime() const {
+    return total_write_time_;
+  }
+
+  int64_t TotalSplitTime() const {
+    return total_split_time_;
   }
 
   static arrow::Result<std::string> CreateAttemptSubDir(const std::string& root_dir) {
@@ -350,6 +354,10 @@ class Splitter::Impl {
   arrow::Compression::type compression_codec_ = arrow::Compression::UNCOMPRESSED;
 
   std::vector<std::unique_ptr<arrow::fs::SubTreeFileSystem>> local_dirs_fs_;
+
+  int64_t total_bytes_written_;
+  int64_t total_split_time_;
+  int64_t total_write_time_;
 };
 
 arrow::Result<std::shared_ptr<Splitter>> Splitter::Make(
@@ -392,8 +400,12 @@ arrow::Result<int64_t> Splitter::TotalBytesWritten() {
   return impl_->TotalBytesWritten();
 }
 
-uint64_t Splitter::TotalWriteTime() {
+int64_t Splitter::TotalWriteTime() {
   return impl_->TotalWriteTime();
+}
+
+uint64_t Splitter::TotalSplitTime() {
+  return impl_->TotalSplitTime();
 }
 
 Splitter::~Splitter() = default;

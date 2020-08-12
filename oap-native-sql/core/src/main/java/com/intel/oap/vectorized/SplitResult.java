@@ -18,15 +18,21 @@
 package com.intel.oap.vectorized;
 
 public class SplitResult {
+    private final long totalSplitTime;
     private final long totalWriteTime;
     private final long totalBytesWritten;
     PartitionFileInfo[] partitionFileInfo;
 
     public SplitResult(
-            long totalWriteTime, long totalBytesWritten, PartitionFileInfo[] partitionFileInfo) {
+            long totalSplitTime, long totalWriteTime, long totalBytesWritten, PartitionFileInfo[] partitionFileInfo) {
+        this.totalSplitTime = totalSplitTime;
         this.totalWriteTime = totalWriteTime;
         this.totalBytesWritten = totalBytesWritten;
         this.partitionFileInfo = partitionFileInfo;
+    }
+
+    public long getTotalSplitTime() {
+        return totalSplitTime;
     }
 
     public long getTotalWriteTime() {
