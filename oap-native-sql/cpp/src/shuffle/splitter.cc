@@ -16,7 +16,6 @@
  */
 #include <gandiva/projector.h>
 #include <gandiva/tree_expr_builder.h>
-#include <iostream>
 #include <memory>
 #include <utility>
 
@@ -178,6 +177,7 @@ arrow::Status BasePartitionSplitter::Stop() {
       total_write_time_ += writer->GetWriteTime();
     }
   }
+  total_split_time_ -= total_write_time_;
   std::sort(std::begin(partition_file_info_), std::end(partition_file_info_));
   return arrow::Status::OK();
 }
@@ -191,7 +191,7 @@ arrow::Result<std::string> BasePartitionSplitter::CreateDataFile() {
 
 arrow::Status BasePartitionSplitter::Split(const arrow::RecordBatch& rb) {
   ARROW_ASSIGN_OR_RAISE(auto writers, GetNextBatchPartitionWriterIndex(rb));
-  RETURN_NOT_OK(DoSplit(rb, std::move(writers)));
+  TIME_MICRO_OR_RAISE(total_split_time_, DoSplit(rb, std::move(writers)));
   return arrow::Status::OK();
 }
 
@@ -311,7 +311,7 @@ arrow::Status FallbackRangeSplitter::Init() {
 arrow::Status FallbackRangeSplitter::Split(const arrow::RecordBatch& rb) {
   ARROW_ASSIGN_OR_RAISE(auto writers, GetNextBatchPartitionWriterIndex(rb));
   ARROW_ASSIGN_OR_RAISE(auto remove_pid, rb.RemoveColumn(0));
-  RETURN_NOT_OK(DoSplit(*remove_pid, std::move(writers)));
+  TIME_MICRO_OR_RAISE(total_split_time_, DoSplit(*remove_pid, std::move(writers)));
   return arrow::Status::OK();
 }
 
