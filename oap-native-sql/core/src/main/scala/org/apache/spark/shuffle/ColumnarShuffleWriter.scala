@@ -105,15 +105,17 @@ class ColumnarShuffleWriter[K, V](
         }
         dep.dataSize.add(bufSizes.sum)
 
+        val startTime = System.nanoTime()
         jniWrapper.split(nativeSplitter, cb.numRows, bufAddrs.toArray, bufSizes.toArray)
+        dep.splitTime.add(System.nanoTime() - startTime)
         writeMetrics.incRecordsWritten(1)
       }
     }
 
     val startTime = System.nanoTime()
     splitResult = jniWrapper.stop(nativeSplitter)
+    dep.splitTime.add(System.nanoTime() - startTime - splitResult.getTotalWriteTime - splitResult.getTotalComputePidTime)
     dep.computePidTime.add(splitResult.getTotalComputePidTime)
-    dep.splitTime.add(splitResult.getTotalSplitTime)
     writeMetrics.incBytesWritten(splitResult.getTotalBytesWritten)
 
     val output = shuffleBlockResolver.getDataFile(dep.shuffleId, mapId)
