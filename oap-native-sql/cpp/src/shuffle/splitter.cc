@@ -171,13 +171,15 @@ arrow::Status BasePartitionSplitter::DoSplit(const arrow::RecordBatch& rb,
 arrow::Status BasePartitionSplitter::Stop() {
   for (const auto& writer : partition_writer_) {
     if (writer != nullptr) {
+      // remove write time that happens in the middle of splitting
+      total_split_time_ -= writer->GetWriteTime();
+
       RETURN_NOT_OK(writer->Stop());
       ARROW_ASSIGN_OR_RAISE(auto b, writer->GetBytesWritten());
       total_bytes_written_ += b;
       total_write_time_ += writer->GetWriteTime();
     }
   }
-  total_split_time_ -= total_write_time_;
   std::sort(std::begin(partition_file_info_), std::end(partition_file_info_));
   return arrow::Status::OK();
 }
@@ -191,7 +193,7 @@ arrow::Result<std::string> BasePartitionSplitter::CreateDataFile() {
 
 arrow::Status BasePartitionSplitter::Split(const arrow::RecordBatch& rb) {
   ARROW_ASSIGN_OR_RAISE(auto writers, GetNextBatchPartitionWriterIndex(rb));
-  TIME_MICRO_OR_RAISE(total_split_time_, DoSplit(rb, std::move(writers)));
+  TIME_NANO_OR_RAISE(total_split_time_, DoSplit(rb, std::move(writers)));
   return arrow::Status::OK();
 }
 
@@ -260,8 +262,8 @@ arrow::Status HashSplitter::CreateProjector(
 arrow::Result<std::vector<int32_t>> HashSplitter::GetNextBatchPartitionWriterIndex(
     const arrow::RecordBatch& rb) {
   arrow::ArrayVector outputs;
-  TIME_MICRO_OR_RAISE(total_compute_pid_time_,
-                      projector_->Evaluate(rb, arrow::default_memory_pool(), &outputs));
+  TIME_NANO_OR_RAISE(total_compute_pid_time_,
+                     projector_->Evaluate(rb, arrow::default_memory_pool(), &outputs));
   if (outputs.size() != 1) {
     return arrow::Status::Invalid("Projector result should have one field, actual is ",
                                   std::to_string(outputs.size()));
@@ -311,7 +313,7 @@ arrow::Status FallbackRangeSplitter::Init() {
 arrow::Status FallbackRangeSplitter::Split(const arrow::RecordBatch& rb) {
   ARROW_ASSIGN_OR_RAISE(auto writers, GetNextBatchPartitionWriterIndex(rb));
   ARROW_ASSIGN_OR_RAISE(auto remove_pid, rb.RemoveColumn(0));
-  TIME_MICRO_OR_RAISE(total_split_time_, DoSplit(*remove_pid, std::move(writers)));
+  TIME_NANO_OR_RAISE(total_split_time_, DoSplit(*remove_pid, std::move(writers)));
   return arrow::Status::OK();
 }
 
