@@ -1224,13 +1224,7 @@ JNIEXPORT jobject JNICALL Java_com_intel_oap_vectorized_ShuffleSplitterJniWrappe
   auto write_time = static_cast<jlong>(splitter->TotalWriteTime());
 
   // TotalBytesWritten
-  auto bytes_written_result = splitter->TotalBytesWritten();
-
-  if (!bytes_written_result.ok()) {
-    env->ThrowNew(io_exception_class,
-                  std::string("native split: get total bytes written failed").c_str());
-  }
-  auto bytes_written = static_cast<jlong>(*bytes_written_result);
+  auto bytes_written = static_cast<jlong>(splitter->TotalBytesWritten());
 
   // GetPartitionFileInfo
   const auto& partition_file_info = splitter->GetPartitionFileInfo();

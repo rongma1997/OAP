@@ -58,9 +58,9 @@ class Splitter {
 
   const std::vector<std::pair<int32_t, std::string>>& GetPartitionFileInfo() const;
 
-  arrow::Result<int64_t> TotalBytesWritten();
+  int64_t TotalBytesWritten();
 
-  uint64_t TotalSplitTime();
+  int64_t TotalSplitTime();
 
   int64_t TotalWriteTime();
 

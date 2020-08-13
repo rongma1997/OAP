@@ -355,9 +355,9 @@ class Splitter::Impl {
 
   std::vector<std::unique_ptr<arrow::fs::SubTreeFileSystem>> local_dirs_fs_;
 
-  int64_t total_bytes_written_;
-  int64_t total_split_time_;
-  int64_t total_write_time_;
+  int64_t total_bytes_written_ = 0;
+  int64_t total_split_time_ = 0;
+  int64_t total_write_time_ = 0;
 };
 
 arrow::Result<std::shared_ptr<Splitter>> Splitter::Make(
@@ -396,7 +396,7 @@ void Splitter::set_compression_codec(arrow::Compression::type compression_codec)
   impl_->set_compression_codec(compression_codec);
 }
 
-arrow::Result<int64_t> Splitter::TotalBytesWritten() {
+int64_t Splitter::TotalBytesWritten() {
   return impl_->TotalBytesWritten();
 }
 
@@ -404,7 +404,7 @@ int64_t Splitter::TotalWriteTime() {
   return impl_->TotalWriteTime();
 }
 
-uint64_t Splitter::TotalSplitTime() {
+int64_t Splitter::TotalSplitTime() {
   return impl_->TotalSplitTime();
 }
 
