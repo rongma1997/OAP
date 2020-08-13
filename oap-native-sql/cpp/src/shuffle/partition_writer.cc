@@ -72,9 +72,9 @@ arrow::Result<std::shared_ptr<PartitionWriter>> PartitionWriter::Create(
         value_addr = value_buffer->mutable_data();
         buffers[type_id].push_back(std::unique_ptr<BufferInfo>(
             new BufferInfo{.validity_buffer = std::move(validity_buffer),
-                              .value_buffer = std::move(value_buffer),
-                              .validity_addr = validity_addr,
-                              .value_addr = value_addr}));
+                           .value_buffer = std::move(value_buffer),
+                           .validity_addr = validity_addr,
+                           .value_addr = value_addr}));
       } break;
     }
   }
@@ -90,7 +90,7 @@ arrow::Result<std::shared_ptr<PartitionWriter>> PartitionWriter::Create(
 
 arrow::Status PartitionWriter::Stop() {
   if (write_offset_[last_type_] != 0) {
-    TIME_MICRO_OR_RAISE(write_time_, WriteArrowRecordBatch());
+    TIME_NANO_OR_RAISE(write_time_, WriteArrowRecordBatch());
     std::fill(std::begin(write_offset_), std::end(write_offset_), 0);
   }
   if (file_writer_opened_) {
