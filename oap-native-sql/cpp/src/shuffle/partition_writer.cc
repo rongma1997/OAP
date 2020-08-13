@@ -89,7 +89,7 @@ arrow::Result<std::shared_ptr<PartitionWriter>> PartitionWriter::Create(
 
 arrow::Status PartitionWriter::Stop() {
   if (write_offset_[last_type_] != 0) {
-    TIME_MICRO_OR_RAISE(write_time_, WriteArrowRecordBatch());
+    TIME_NANO_OR_RAISE(write_time_, WriteArrowRecordBatch());
     std::fill(std::begin(write_offset_), std::end(write_offset_), 0);
   }
   if (file_writer_opened_) {

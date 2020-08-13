@@ -250,7 +250,7 @@ class Splitter::Impl {
 #undef WRITE_BINARY
 
     auto end = std::chrono::steady_clock::now();
-    total_split_time_ += std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+    total_split_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
 
     return arrow::Status::OK();
   }
@@ -258,12 +258,12 @@ class Splitter::Impl {
   arrow::Status Stop() {
     // write final record batch
     for (const auto& writer : pid_writer_) {
+      total_split_time_ -= writer->write_time();
       RETURN_NOT_OK(writer->Stop());
       ARROW_ASSIGN_OR_RAISE(auto bytes, writer->BytesWritten());
       total_bytes_written_ += bytes;
       total_write_time_ += writer->write_time();
     }
-    total_split_time_ -= total_write_time_;
     std::sort(std::begin(temp_files), std::end(temp_files));
     return arrow::Status::OK();
   }
