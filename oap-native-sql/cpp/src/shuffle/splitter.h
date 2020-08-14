@@ -60,8 +60,6 @@ class Splitter {
 
   int64_t TotalBytesWritten();
 
-  int64_t TotalSplitTime();
-
   int64_t TotalWriteTime();
 
   // writer must be called after Split.

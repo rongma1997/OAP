@@ -115,7 +115,6 @@ class Splitter::Impl {
   }
 
   arrow::Status Split(const arrow::RecordBatch& record_batch) {
-    auto start = std::chrono::steady_clock::now();
     const auto& pid_arr = record_batch.column_data(0);
     if (pid_arr->GetNullCount() != 0) {
       return arrow::Status::Invalid("Column partition id should not contain NULL value");
@@ -249,16 +248,12 @@ class Splitter::Impl {
 #undef WRITE_FIXEDWIDTH
 #undef WRITE_BINARY
 
-    auto end = std::chrono::steady_clock::now();
-    total_split_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
-
     return arrow::Status::OK();
   }
 
   arrow::Status Stop() {
     // write final record batch
     for (const auto& writer : pid_writer_) {
-      total_split_time_ -= writer->write_time();
       RETURN_NOT_OK(writer->Stop());
       ARROW_ASSIGN_OR_RAISE(auto bytes, writer->BytesWritten());
       total_bytes_written_ += bytes;
@@ -274,10 +269,6 @@ class Splitter::Impl {
 
   int64_t TotalWriteTime() const {
     return total_write_time_;
-  }
-
-  int64_t TotalSplitTime() const {
-    return total_split_time_;
   }
 
   static arrow::Result<std::string> CreateAttemptSubDir(const std::string& root_dir) {
@@ -356,7 +347,6 @@ class Splitter::Impl {
   std::vector<std::unique_ptr<arrow::fs::SubTreeFileSystem>> local_dirs_fs_;
 
   int64_t total_bytes_written_ = 0;
-  int64_t total_split_time_ = 0;
   int64_t total_write_time_ = 0;
 };
 
@@ -402,10 +392,6 @@ int64_t Splitter::TotalBytesWritten() {
 
 int64_t Splitter::TotalWriteTime() {
   return impl_->TotalWriteTime();
-}
-
-int64_t Splitter::TotalSplitTime() {
-  return impl_->TotalSplitTime();
 }
 
 Splitter::~Splitter() = default;
