@@ -190,8 +190,7 @@ arrow::Result<std::string> BasePartitionSplitter::CreateDataFile() {
 
 arrow::Status BasePartitionSplitter::Split(const arrow::RecordBatch& rb) {
   ARROW_ASSIGN_OR_RAISE(auto writers, GetNextBatchPartitionWriterIndex(rb));
-  RETURN_NOT_OK( DoSplit(rb, std::move(writers)));
-  return arrow::Status::OK();
+  return DoSplit(rb, std::move(writers));
 }
 
 // ----------------------------------------------------------------------
@@ -252,8 +251,7 @@ arrow::Status HashSplitter::CreateProjector(
   }
   auto hash_expr =
       gandiva::TreeExprBuilder::MakeExpression(hash, arrow::field("pid", arrow::int32()));
-  RETURN_NOT_OK(gandiva::Projector::Make(schema_, {hash_expr}, &projector_));
-  return arrow::Status::OK();
+  return gandiva::Projector::Make(schema_, {hash_expr}, &projector_);
 }
 
 arrow::Result<std::vector<int32_t>> HashSplitter::GetNextBatchPartitionWriterIndex(
@@ -303,15 +301,13 @@ arrow::Result<std::shared_ptr<FallbackRangeSplitter>> FallbackRangeSplitter::Cre
 arrow::Status FallbackRangeSplitter::Init() {
   input_schema_ = std::move(schema_);
   ARROW_ASSIGN_OR_RAISE(schema_, input_schema_->RemoveField(0))
-  RETURN_NOT_OK(BasePartitionSplitter::Init());
-  return arrow::Status::OK();
+  return BasePartitionSplitter::Init();
 }
 
 arrow::Status FallbackRangeSplitter::Split(const arrow::RecordBatch& rb) {
   ARROW_ASSIGN_OR_RAISE(auto writers, GetNextBatchPartitionWriterIndex(rb));
   ARROW_ASSIGN_OR_RAISE(auto remove_pid, rb.RemoveColumn(0));
-  RETURN_NOT_OK( DoSplit(*remove_pid, std::move(writers)));
-  return arrow::Status::OK();
+  return DoSplit(*remove_pid, std::move(writers));
 }
 
 arrow::Result<std::vector<int32_t>>
