@@ -368,12 +368,12 @@ class ColumnarAggregation(
             eval_elapse += System.nanoTime() - beforeFinish
           }
           data_loaded = true
-          aggrTime += NANOSECONDS.toMillis(eval_elapse)
+          aggrTime += (eval_elapse)
         }
         val beforeEval = System.nanoTime()
         resultColumnarBatch = getAggregationResult(result_iterator)
         eval_elapse += System.nanoTime() - beforeEval
-        aggrTime += NANOSECONDS.toMillis(eval_elapse)
+        aggrTime += (eval_elapse)
         if (resultColumnarBatch.numRows == 0) {
           resultColumnarBatch.close()
           logInfo(s"Aggregation completed, total output ${numOutputRows} rows, ${numOutputBatches} batches")

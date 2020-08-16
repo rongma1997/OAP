@@ -255,7 +255,7 @@ case class RowToArrowColumnarExec(child: SparkPlan) extends UnaryExecNode {
   override lazy val metrics: Map[String, SQLMetric] = Map(
     "numInputRows" -> SQLMetrics.createMetric(sparkContext, "number of input rows"),
     "numOutputBatches" -> SQLMetrics.createMetric(sparkContext, "output_batches"),
-    "processTime" -> SQLMetrics.createTimingMetric(sparkContext, "totaltime_rowtoarrowcolumnar")
+    "processTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "totaltime_rowtoarrowcolumnar")
   )
 
   override def doExecuteColumnar(): RDD[ColumnarBatch] = {
@@ -294,7 +294,7 @@ case class RowToArrowColumnarExec(child: SparkPlan) extends UnaryExecNode {
               elapse += System.nanoTime() - start
               rowCount += 1
             }
-            processTime.set(NANOSECONDS.toMillis(elapse))
+            processTime.set((elapse))
             numInputRows += rowCount
             numOutputBatches += 1
             last_cb = new ColumnarBatch(vectors.toArray, rowCount)

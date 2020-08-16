@@ -79,9 +79,9 @@ class ColumnarHashAggregateExec(
     "numOutputRows" -> SQLMetrics.createMetric(sparkContext, "number of output rows"),
     "numOutputBatches" -> SQLMetrics.createMetric(sparkContext, "output_batches"),
     "numInputBatches" -> SQLMetrics.createMetric(sparkContext, "input_batches"),
-    "aggTime" -> SQLMetrics.createTimingMetric(sparkContext, "time in aggregation process"),
+    "aggTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "time in aggregation process"),
     "totalTime" -> SQLMetrics
-      .createTimingMetric(sparkContext, "totaltime_hashagg"))
+      .createNanoTimingMetric(sparkContext, "totaltime_hashagg"))
 
   val numOutputRows = longMetric("numOutputRows")
   val numOutputBatches = longMetric("numOutputBatches")

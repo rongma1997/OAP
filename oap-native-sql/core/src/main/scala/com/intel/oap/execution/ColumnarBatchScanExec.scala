@@ -33,7 +33,7 @@ class ColumnarBatchScanExec(output: Seq[AttributeReference], @transient scan: Sc
     "numOutputRows" -> SQLMetrics.createMetric(sparkContext, "number of output rows"),
     "numInputBatches" -> SQLMetrics.createMetric(sparkContext, "input_batches"),
     "numOutputBatches" -> SQLMetrics.createMetric(sparkContext, "output_batches"),
-    "scanTime" -> SQLMetrics.createTimingMetric(sparkContext, "totaltime_batchscan"))
+    "scanTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "totaltime_batchscan"))
   override def doExecuteColumnar(): RDD[ColumnarBatch] = {
     val numOutputRows = longMetric("numOutputRows")
     val numInputBatches = longMetric("numInputBatches")

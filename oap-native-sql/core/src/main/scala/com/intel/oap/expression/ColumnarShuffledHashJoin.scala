@@ -90,7 +90,7 @@ class ColumnarShuffledHashJoin(
         build_cb.column(i).asInstanceOf[ArrowWritableColumnVector].retain())
       inputBatchHolder += build_cb
       prober.evaluate(build_rb)
-      _buildTime += NANOSECONDS.toMillis(System.nanoTime() - beforeBuild)
+      _buildTime += (System.nanoTime() - beforeBuild)
       ConverterUtils.releaseArrowRecordBatch(build_rb)
     }
     if (build_cb != null) {
@@ -114,7 +114,7 @@ class ColumnarShuffledHashJoin(
     // there will be different when condition is null or not null
     val beforeBuild = System.nanoTime()
     probe_iterator = prober.finishByIterator()
-    _buildTime += NANOSECONDS.toMillis(System.nanoTime() - beforeBuild)
+    _buildTime += (System.nanoTime() - beforeBuild)
     buildTime += _buildTime
 
     new Iterator[ColumnarBatch] {
@@ -135,7 +135,7 @@ class ColumnarShuffledHashJoin(
         val output_rb = probe_iterator.process(stream_input_arrow_schema, stream_rb)
 
         ConverterUtils.releaseArrowRecordBatch(stream_rb)
-        joinTime += NANOSECONDS.toMillis(System.nanoTime() - beforeJoin)
+        joinTime += (System.nanoTime() - beforeJoin)
         if (output_rb == null) {
           val resultColumnVectors =
             ArrowWritableColumnVector.allocateColumns(0, resultSchema).toArray

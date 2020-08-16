@@ -26,10 +26,10 @@ class ColumnarBroadcastExchangeExec(mode: BroadcastMode, child: SparkPlan)
   override lazy val metrics = Map(
     "dataSize" -> SQLMetrics.createSizeMetric(sparkContext, "data size"),
     "numRows" -> SQLMetrics.createMetric(sparkContext, "number of Rows"),
-    "totalTime" -> SQLMetrics.createTimingMetric(sparkContext, "totaltime_broadcastExchange"),
-    "collectTime" -> SQLMetrics.createTimingMetric(sparkContext, "time to collect"),
-    "buildTime" -> SQLMetrics.createTimingMetric(sparkContext, "time to build"),
-    "broadcastTime" -> SQLMetrics.createTimingMetric(sparkContext, "time to broadcast"))
+    "totalTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "totaltime_broadcastExchange"),
+    "collectTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "time to collect"),
+    "buildTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "time to build"),
+    "broadcastTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "time to broadcast"))
   @transient
   private lazy val promise = Promise[broadcast.Broadcast[Any]]()
 
@@ -65,7 +65,7 @@ class ColumnarBroadcastExchangeExec(mode: BroadcastMode, child: SparkPlan)
             }
             val beforeBuild = System.nanoTime()
             val bytes = ConverterUtils.convertToNetty(_input.toArray)
-            longMetric("buildTime") += NANOSECONDS.toMillis(System.nanoTime() - beforeBuild)
+            longMetric("buildTime") += (System.nanoTime() - beforeBuild)
             _input.toArray.foreach(batch => {
               (0 until batch.numCols).foreach(i =>
                 batch.column(i).asInstanceOf[ArrowWritableColumnVector].close())
@@ -83,7 +83,7 @@ class ColumnarBroadcastExchangeExec(mode: BroadcastMode, child: SparkPlan)
             s"Cannot broadcast the table over ${BroadcastExchangeExec.MAX_BROADCAST_TABLE_ROWS} rows: $numRows rows")
         }
 
-        longMetric("collectTime") += NANOSECONDS.toMillis(System.nanoTime() - beforeCollect)
+        longMetric("collectTime") += (System.nanoTime() - beforeCollect)
 
         longMetric("numRows") += numRows
         longMetric("dataSize") += dataSize
@@ -96,7 +96,7 @@ class ColumnarBroadcastExchangeExec(mode: BroadcastMode, child: SparkPlan)
 
         // Broadcast the relation
         val broadcasted = sparkContext.broadcast(relation)
-        longMetric("broadcastTime") += NANOSECONDS.toMillis(System.nanoTime() - beforeBroadcast)
+        longMetric("broadcastTime") += (System.nanoTime() - beforeBroadcast)
         longMetric("totalTime").merge(longMetric("collectTime"))
         longMetric("totalTime").merge(longMetric("broadcastTime"))
         val executionId = sparkContext.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)
