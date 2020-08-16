@@ -30,11 +30,13 @@ static std::string GenerateUUID() {
   return boost::uuids::to_string(generator());
 }
 
-static arrow::Result<std::string> CreateRandomSubDir(const std::string& base_dir) {
+static arrow::Result<std::string> CreateRandomSubDir(const std::string& base_dir,
+                                                     const std::string& prefix = "") {
   bool created = false;
   std::string random_dir;
   while (!created) {
-    random_dir = arrow::fs::internal::ConcatAbstractPath(base_dir, GenerateUUID());
+    random_dir =
+        arrow::fs::internal::ConcatAbstractPath(base_dir, prefix + GenerateUUID());
     ARROW_ASSIGN_OR_RAISE(
         created, arrow::internal::CreateDirTree(
                      *arrow::internal::PlatformFilename::FromString(random_dir)));
@@ -44,6 +46,7 @@ static arrow::Result<std::string> CreateRandomSubDir(const std::string& base_dir
 
 static arrow::Result<std::vector<std::string>> GetConfiguredLocalDirs() {
   auto joined_dirs_c = std::getenv("NATIVESQL_SPARK_LOCAL_DIRS");
+  auto prefix = "columnar-shuffle-";
   if (joined_dirs_c != nullptr && strcmp(joined_dirs_c, "") > 0) {
     auto joined_dirs = std::string(joined_dirs_c);
     std::string delimiter = ",";
@@ -54,17 +57,19 @@ static arrow::Result<std::vector<std::string>> GetConfiguredLocalDirs() {
     while ((pos = joined_dirs.find(delimiter)) != std::string::npos) {
       root_dir = joined_dirs.substr(0, pos);
       if (root_dir.length() > 0) {
-        dirs.push_back(root_dir);
+        ARROW_ASSIGN_OR_RAISE(auto dir, CreateRandomSubDir(root_dir, prefix))
+        dirs.push_back(std::move(dir));
       }
       joined_dirs.erase(0, pos + delimiter.length());
     }
     if (joined_dirs.length() > 0) {
-      dirs.push_back(joined_dirs);
+      ARROW_ASSIGN_OR_RAISE(auto dir, CreateRandomSubDir(joined_dirs, prefix))
+      dirs.push_back(std::move(dir));
     }
     return dirs;
   } else {
     ARROW_ASSIGN_OR_RAISE(auto arrow_tmp_dir,
-                          arrow::internal::TemporaryDir::Make("columnar-shuffle-"));
+                          arrow::internal::TemporaryDir::Make(prefix));
     return std::vector<std::string>{arrow_tmp_dir->path().ToString()};
   }
 }
