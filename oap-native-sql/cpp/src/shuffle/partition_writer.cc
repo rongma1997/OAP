@@ -42,18 +42,16 @@ arrow::Result<std::shared_ptr<PartitionWriter>> PartitionWriter::Create(
   for (auto type_id : column_type_id) {
     switch (type_id) {
       case Type::SHUFFLE_BINARY: {
-        std::unique_ptr<arrow::BinaryBuilder> builder;
-        builder.reset(new arrow::BinaryBuilder(arrow::default_memory_pool()));
+        auto builder = std::make_unique<arrow::BinaryBuilder>(arrow::default_memory_pool());
         binary_bulders.push_back(std::move(builder));
       } break;
       case Type::SHUFFLE_LARGE_BINARY: {
-        std::unique_ptr<arrow::LargeBinaryBuilder> builder;
-        builder.reset(new arrow::LargeBinaryBuilder(arrow::default_memory_pool()));
+        auto builder = std::make_unique<arrow::LargeBinaryBuilder>(arrow::default_memory_pool());
         large_binary_bulders.push_back(std::move(builder));
       } break;
       case Type::SHUFFLE_NULL: {
-        buffers[type_id].push_back(std::unique_ptr<BufferInfo>(
-            new BufferInfo{.validity_buffer = nullptr, .value_buffer = nullptr}));
+        buffers[type_id].push_back(std::make_unique<BufferInfo>(
+            BufferInfo{.validity_buffer = nullptr, .value_buffer = nullptr}));
       } break;
       default: {
         std::shared_ptr<arrow::Buffer> validity_buffer;
@@ -70,8 +68,8 @@ arrow::Result<std::shared_ptr<PartitionWriter>> PartitionWriter::Create(
         }
         validity_addr = validity_buffer->mutable_data();
         value_addr = value_buffer->mutable_data();
-        buffers[type_id].push_back(std::unique_ptr<BufferInfo>(
-            new BufferInfo{.validity_buffer = std::move(validity_buffer),
+        buffers[type_id].push_back(std::make_unique<BufferInfo>(
+            BufferInfo{.validity_buffer = std::move(validity_buffer),
                            .value_buffer = std::move(value_buffer),
                            .validity_addr = validity_addr,
                            .value_addr = value_addr}));
