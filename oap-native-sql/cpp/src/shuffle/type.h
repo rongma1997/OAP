@@ -25,7 +25,8 @@
 namespace sparkcolumnarplugin {
 namespace shuffle {
 
-static constexpr int64_t kDefaultSplitterBufferSize = 4096;
+static constexpr int32_t kDefaultSplitterBufferSize = 4096;
+static constexpr int32_t kDefaultNumSubDirs = 64;
 
 struct BufferInfo {
   std::shared_ptr<arrow::Buffer> validity_buffer;
