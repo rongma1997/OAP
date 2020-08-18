@@ -17,14 +17,14 @@
 
 #pragma once
 
-#include <sstream>
-#include <iomanip>
 #include <arrow/filesystem/filesystem.h>
 #include <arrow/filesystem/localfs.h>
 #include <arrow/filesystem/path_util.h>
 #include <arrow/util/io_util.h>
 #include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_io.hpp>
+#include <iomanip>
+#include <sstream>
 
 namespace sparkcolumnarplugin {
 namespace shuffle {
@@ -35,7 +35,8 @@ static std::string GenerateUUID() {
 }
 
 static arrow::Result<std::string> CreateTempShuffleFile(
-    const std::shared_ptr<arrow::fs::LocalFileSystem>& fs, const std::string& configured_dir, int32_t sub_dir_id) {
+    const std::shared_ptr<arrow::fs::LocalFileSystem>& fs,
+    const std::string& configured_dir, int32_t sub_dir_id) {
   std::stringstream ss;
   ss << std::setfill('0') << std::setw(2) << std::hex << sub_dir_id;
   auto dir = arrow::fs::internal::ConcatAbstractPath(configured_dir, ss.str());
@@ -43,8 +44,9 @@ static arrow::Result<std::string> CreateTempShuffleFile(
 
   bool exist = true;
   std::string file_path;
-  while(exist) {
-    file_path = arrow::fs::internal::ConcatAbstractPath(dir, "temp_shuffle_" + GenerateUUID());
+  while (exist) {
+    file_path =
+        arrow::fs::internal::ConcatAbstractPath(dir, "temp_shuffle_" + GenerateUUID());
     ARROW_ASSIGN_OR_RAISE(auto file_info, fs->GetFileInfo(file_path));
     if (file_info.type() == arrow::fs::FileType::NotFound) {
       exist = false;

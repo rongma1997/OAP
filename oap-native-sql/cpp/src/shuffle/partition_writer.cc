@@ -15,8 +15,6 @@
  * limitations under the License.
  */
 
-#include "shuffle/partition_writer.h"
-
 #include <arrow/array.h>
 #include <arrow/io/file.h>
 #include <arrow/ipc/options.h>
@@ -24,7 +22,9 @@
 #include <arrow/record_batch.h>
 #include <chrono>
 #include <memory>
-#include "utils.h"
+
+#include "shuffle/partition_writer.h"
+#include "shuffle/utils.h"
 #include "utils/macros.h"
 
 namespace sparkcolumnarplugin {
@@ -42,11 +42,13 @@ arrow::Result<std::shared_ptr<PartitionWriter>> PartitionWriter::Create(
   for (auto type_id : column_type_id) {
     switch (type_id) {
       case Type::SHUFFLE_BINARY: {
-        auto builder = std::make_unique<arrow::BinaryBuilder>(arrow::default_memory_pool());
+        auto builder =
+            std::make_unique<arrow::BinaryBuilder>(arrow::default_memory_pool());
         binary_bulders.push_back(std::move(builder));
       } break;
       case Type::SHUFFLE_LARGE_BINARY: {
-        auto builder = std::make_unique<arrow::LargeBinaryBuilder>(arrow::default_memory_pool());
+        auto builder =
+            std::make_unique<arrow::LargeBinaryBuilder>(arrow::default_memory_pool());
         large_binary_bulders.push_back(std::move(builder));
       } break;
       case Type::SHUFFLE_NULL: {
@@ -70,9 +72,9 @@ arrow::Result<std::shared_ptr<PartitionWriter>> PartitionWriter::Create(
         value_addr = value_buffer->mutable_data();
         buffers[type_id].push_back(std::make_unique<BufferInfo>(
             BufferInfo{.validity_buffer = std::move(validity_buffer),
-                           .value_buffer = std::move(value_buffer),
-                           .validity_addr = validity_addr,
-                           .value_addr = value_addr}));
+                       .value_buffer = std::move(value_buffer),
+                       .validity_addr = validity_addr,
+                       .value_addr = value_addr}));
       } break;
     }
   }

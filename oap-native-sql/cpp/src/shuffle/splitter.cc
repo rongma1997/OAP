@@ -19,7 +19,7 @@
 #include <memory>
 #include <utility>
 
-#include "splitter.h"
+#include "shuffle/splitter.h"
 
 namespace sparkcolumnarplugin {
 namespace shuffle {
@@ -186,7 +186,8 @@ arrow::Result<std::string> Splitter::CreateDataFile() {
   ARROW_ASSIGN_OR_RAISE(auto data_file,
                         CreateTempShuffleFile(fs_, configured_dirs_[dir_selection_],
                                               sub_dir_selection_[dir_selection_]))
-  sub_dir_selection_[dir_selection_] = (sub_dir_selection_[dir_selection_] + 1) % num_sub_dirs_;
+  sub_dir_selection_[dir_selection_] =
+      (sub_dir_selection_[dir_selection_] + 1) % num_sub_dirs_;
   dir_selection_ = (dir_selection_ + 1) % m;
   return data_file;
 }

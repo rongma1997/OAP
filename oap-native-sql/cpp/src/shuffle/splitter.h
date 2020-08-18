@@ -28,7 +28,6 @@
 #include <gandiva/projector.h>
 
 #include "shuffle/partition_writer.h"
-#include "shuffle/partitioning_jni_bridge.h"
 #include "shuffle/utils.h"
 
 namespace sparkcolumnarplugin {

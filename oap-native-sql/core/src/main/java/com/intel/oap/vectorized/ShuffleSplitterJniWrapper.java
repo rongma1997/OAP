@@ -36,7 +36,12 @@ public class ShuffleSplitterJniWrapper {
    * @return native splitter instance id if created successfully.
    * @throws RuntimeException
    */
-  public long make(NativePartitioning part, int bufferSize, int subDirsPerLocalDir, String localDirs, String codec)
+  public long make(
+      NativePartitioning part,
+      int bufferSize,
+      int subDirsPerLocalDir,
+      String localDirs,
+      String codec)
       throws RuntimeException {
     return nativeMake(
         part.getShortName(),

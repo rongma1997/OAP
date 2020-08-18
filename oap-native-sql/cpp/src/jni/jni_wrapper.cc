@@ -36,7 +36,6 @@
 #include "jni/concurrent_map.h"
 #include "jni/jni_common.h"
 #include "proto/protobuf_utils.h"
-#include "shuffle/partitioning_jni_bridge.h"
 #include "shuffle/splitter.h"
 
 namespace types {
