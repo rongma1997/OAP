@@ -26,6 +26,9 @@ INCLUDE_DIRECTORIES(${Boost_INCLUDE_DIRS})
 find_package(JNI REQUIRED)
 set(source_root_directory ${CMAKE_CURRENT_SOURCE_DIR})
 
+SET(CMAKE_EXE_LINKER_FLAGS
+        "${CMAKE_EXE_LINKER_FLAGS} -Wl,-rpath,/home/mr/miniconda3/envs/intel-arrow-dev/lib -Wl,-rpath-link,/home/mr/miniconda3/envs/intel-arrow-dev/lib -L/home/mr/miniconda3/envs/intel-arrow-dev/lib")
+
 # Gandiva protobuf
 
 set(CMAKE_FIND_LIBRARY_SUFFIXES ".so")
@@ -120,9 +123,12 @@ set(GANDIVA_LINK_LIBS gandiva)
 #######
 if(TESTS)
   find_package(GTest)
+  find_library(GTEST_LIB gtest)
+  find_library(GMOCK_LIB gmock)
+  find_library(GTEST_MAIN_LIB gtest_main)
 macro(package_add_test TESTNAME)
   add_executable(${TESTNAME} ${ARGN})
-  target_link_libraries(${TESTNAME} gtest gmock gtest_main spark_columnar_jni ${CMAKE_THREAD_LIBS_INIT})
+  target_link_libraries(${TESTNAME} ${GTEST_LIB} ${GMOCK_LIB} ${GTEST_MAIN_LIB} spark_columnar_jni ${CMAKE_THREAD_LIBS_INIT})
   target_include_directories(${TESTNAME} PUBLIC ${source_root_directory})
   gtest_discover_tests(${TESTNAME}
     WORKING_DIRECTORY ${PROJECT_DIR}
@@ -250,11 +256,11 @@ add_dependencies(spark_columnar_jni jni_proto)
 
 if(BUILD_PROTOBUF)
 target_link_libraries(spark_columnar_jni
-                      LINK_PUBLIC ${ARROW_LIB} ${PARQUET_LIB} ${GANDIVA_LIB} ${GANDIVA_LINK_LIBS}
+                      LINK_PUBLIC ${ARROW_LIB} ${PARQUET_LIB} ${GANDIVA_LIB}
                       LINK_PRIVATE protobuf::libprotobuf)
 else()
 target_link_libraries(spark_columnar_jni
-                      LINK_PUBLIC ${ARROW_LIB} ${PARQUET_LIB} ${GANDIVA_LIB} ${GANDIVA_LINK_LIBS} ${PROTOBUF_LIBRARY})
+                      LINK_PUBLIC ${ARROW_LIB} ${PARQUET_LIB} ${GANDIVA_LIB} ${PROTOBUF_LIBRARY})
 endif()
 target_include_directories(spark_columnar_jni PUBLIC ${CMAKE_SYSTEM_INCLUDE_PATH} ${JNI_INCLUDE_DIRS} ${source_root_directory} ${PROTO_OUTPUT_DIR} ${PROTOBUF_INCLUDE})
 set_target_properties(spark_columnar_jni PROPERTIES
