@@ -105,9 +105,7 @@ class SmallDataRepartitionSuite extends RepartitionSuite {
 class TPCHTableRepartitionSuite extends RepartitionSuite {
   import testImplicits._
 
-  val filePath = getClass.getClassLoader
-    .getResource("part-00000-d648dd34-c9d2-4fe9-87f2-770ef3551442-c000.snappy.parquet")
-    .getFile
+  val filePath = getTestResourcePath("test-data/part-00000-d648dd34-c9d2-4fe9-87f2-770ef3551442-c000.snappy.parquet")
 
   override lazy val input = spark.read.parquet(filePath)
 
