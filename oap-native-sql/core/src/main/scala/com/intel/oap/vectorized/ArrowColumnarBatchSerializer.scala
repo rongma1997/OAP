@@ -20,8 +20,8 @@ package com.intel.oap.vectorized
 import java.io._
 import java.nio.ByteBuffer
 
-import com.intel.oap.expression.ConverterUtils
 import org.apache.arrow.memory.BufferAllocator
+import org.apache.arrow.util.SchemaUtils
 import org.apache.arrow.vector.ipc.ArrowStreamReader
 import org.apache.arrow.vector.{
   BaseFixedWidthVector,
@@ -174,7 +174,7 @@ private class ArrowColumnarBatchSerializerInstance(readBatchNumRows: SQLMetric)
       private def decompressVectors(): Unit = {
         if (jniWrapper == null) {
           jniWrapper = new ShuffleDecompressionJniWrapper
-          schemaHolderId = jniWrapper.make(ConverterUtils.getSchemaBytesBuf(root.getSchema))
+          schemaHolderId = jniWrapper.make(SchemaUtils.get.serialize(root.getSchema))
         }
         if (vectorLoader == null) {
           vectorLoader = new VectorLoader(root)

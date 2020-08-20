@@ -18,6 +18,7 @@
 package org.apache.spark.shuffle
 
 import java.io.{File, FileInputStream, FileOutputStream, IOException}
+import java.nio.ByteBuffer
 
 import com.google.common.annotations.VisibleForTesting
 import com.google.common.io.Closeables
@@ -26,6 +27,8 @@ import com.intel.oap.vectorized.{
   ShuffleSplitterJniWrapper,
   SplitResult
 }
+import org.apache.arrow.util.SchemaUtils
+import org.apache.arrow.vector.types.pojo.Schema
 import org.apache.spark._
 import org.apache.spark.internal.Logging
 import org.apache.spark.scheduler.MapStatus
@@ -55,15 +58,11 @@ class ColumnarShuffleWriter[K, V](
 
   private var mapStatus: MapStatus = _
 
-  private val nativeBufferSize =
-    conf.getInt("spark.sql.execution.arrow.maxRecordsPerBatch", 4096)
-  private val localDirs = Utils.getConfiguredLocalDirs(conf).mkString(",")
   private val transeferToEnabled = conf.getBoolean("spark.file.transferTo", true)
-  private val compressionCodec = if (conf.getBoolean("spark.shuffle.compress", true)) {
-    conf.get("spark.io.compression.codec", "lz4")
-  } else {
-    "uncompressed"
-  }
+  private val compressionEnabled = conf.getBoolean("spark.shuffle.compress", true)
+  private val compressionCodec = conf.get("spark.io.compression.codec", "lz4")
+  private val nativeBufferSize =
+    conf.getLong("spark.sql.execution.arrow.maxRecordsPerBatch", 4096)
 
   private val jniWrapper = new ShuffleSplitterJniWrapper()
 
@@ -83,8 +82,13 @@ class ColumnarShuffleWriter[K, V](
     }
 
     if (nativeSplitter == 0) {
+      val schema: Schema = Schema.deserialize(ByteBuffer.wrap(dep.serializedSchema))
+      val localDirs = Utils.getConfiguredLocalDirs(conf).mkString(",")
       nativeSplitter =
-        jniWrapper.make(dep.nativePartitioning, nativeBufferSize, localDirs, compressionCodec)
+        jniWrapper.make(SchemaUtils.get.serialize(schema), nativeBufferSize, localDirs)
+      if (compressionEnabled) {
+        jniWrapper.setCompressionCodec(nativeSplitter, compressionCodec)
+      }
     }
 
     while (records.hasNext) {
@@ -114,8 +118,7 @@ class ColumnarShuffleWriter[K, V](
 
     val startTime = System.nanoTime()
     splitResult = jniWrapper.stop(nativeSplitter)
-    dep.computePidTime.add(splitResult.getTotalComputePidTime)
-    dep.splitTime.add(-(splitResult.getTotalWriteTime + splitResult.getTotalComputePidTime))
+    dep.splitTime.add(System.nanoTime() - startTime - splitResult.getTotalWriteTime)
     writeMetrics.incBytesWritten(splitResult.getTotalBytesWritten)
 
     val output = shuffleBlockResolver.getDataFile(dep.shuffleId, mapId)
@@ -149,7 +152,7 @@ class ColumnarShuffleWriter[K, V](
         try {
           splitResult.getPartitionFileInfo.foreach { fileInfo =>
             {
-              val pid = fileInfo.getPartitionId
+              val pid = fileInfo.getPid
               val file = new File(fileInfo.getFilePath)
               if (file.exists()) {
                 if (!file.delete()) {
@@ -177,7 +180,7 @@ class ColumnarShuffleWriter[K, V](
     try {
       splitResult.getPartitionFileInfo.foreach { fileInfo =>
         {
-          val pid = fileInfo.getPartitionId
+          val pid = fileInfo.getPid
           val filePath = fileInfo.getFilePath
 
           val file = new File(filePath)
@@ -207,6 +210,10 @@ class ColumnarShuffleWriter[K, V](
       Closeables.close(out, threwException)
       val writeTime = System.nanoTime - writerStartTime + splitResult.getTotalWriteTime
       writeMetrics.incWriteTime(writeTime)
+
+      // merge into total time
+      dep.totalTime.add(writeTime)
+      dep.totalTime.merge(dep.splitTime)
     }
     lengths
   }

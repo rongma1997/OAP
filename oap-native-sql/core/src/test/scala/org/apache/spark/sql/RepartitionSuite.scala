@@ -121,11 +121,7 @@ class TPCHTableRepartitionSuite extends RepartitionSuite {
     withRepartition(df => df.repartitionByRange('n_name))
   }
 
-  test("tpch table hash partitioning with expression") {
-    withRepartition(df => df.repartition('n_nationkey + 'n_regionkey))
-  }
-
-  test("tpch table sum after repartition") {
+  test("test tpch sum after repartition") {
     withTransformationAndRepartition(
       df => df.groupBy("n_regionkey").agg(Map("n_nationkey" -> "sum")),
       df => df.repartition(2))
