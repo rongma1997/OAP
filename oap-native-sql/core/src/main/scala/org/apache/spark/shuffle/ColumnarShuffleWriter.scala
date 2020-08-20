@@ -55,9 +55,9 @@ class ColumnarShuffleWriter[K, V](
 
   private var mapStatus: MapStatus = _
 
-  private val localDirs = blockManager.diskBlockManager.localDirs.mkString(",")
   private val nativeBufferSize =
     conf.getInt("spark.sql.execution.arrow.maxRecordsPerBatch", 4096)
+  private val localDirs = Utils.getConfiguredLocalDirs(conf).mkString(",")
   private val transeferToEnabled = conf.getBoolean("spark.file.transferTo", true)
   private val compressionCodec = if (conf.getBoolean("spark.shuffle.compress", true)) {
     conf.get("spark.io.compression.codec", "lz4")
@@ -83,12 +83,8 @@ class ColumnarShuffleWriter[K, V](
     }
 
     if (nativeSplitter == 0) {
-      nativeSplitter = jniWrapper.make(
-        dep.nativePartitioning,
-        nativeBufferSize,
-        blockManager.subDirsPerLocalDir,
-        localDirs,
-        compressionCodec)
+      nativeSplitter =
+        jniWrapper.make(dep.nativePartitioning, nativeBufferSize, localDirs, compressionCodec)
     }
 
     while (records.hasNext) {
@@ -118,9 +114,8 @@ class ColumnarShuffleWriter[K, V](
 
     val startTime = System.nanoTime()
     splitResult = jniWrapper.stop(nativeSplitter)
-    dep.splitTime.add(System
-      .nanoTime() - startTime - splitResult.getTotalWriteTime - splitResult.getTotalComputePidTime)
     dep.computePidTime.add(splitResult.getTotalComputePidTime)
+    dep.splitTime.add(-(splitResult.getTotalWriteTime + splitResult.getTotalComputePidTime))
     writeMetrics.incBytesWritten(splitResult.getTotalBytesWritten)
 
     val output = shuffleBlockResolver.getDataFile(dep.shuffleId, mapId)

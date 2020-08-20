@@ -107,8 +107,8 @@ class ColumnarShuffleExchangeExec(
       serializer,
       writeMetrics,
       longMetric("dataSize"),
-      longMetric("computePidTime"),
-      longMetric("splitTime"))
+      longMetric("splitTime"),
+      longMetric("computePidTime"))
   }
 
   private var cachedShuffleRDD: ShuffledColumnarBatchRDD = _
@@ -167,8 +167,8 @@ object ColumnarShuffleExchangeExec extends Logging {
       serializer: Serializer,
       writeMetrics: Map[String, SQLMetric],
       dataSize: SQLMetric,
-      computePidTime: SQLMetric,
-      splitTime: SQLMetric): ShuffleDependency[Int, ColumnarBatch, ColumnarBatch] = {
+      splitTime: SQLMetric,
+      computePidTime: SQLMetric): ShuffleDependency[Int, ColumnarBatch, ColumnarBatch] = {
 
     val arrowFields = outputAttributes.map(attr => {
       Field

@@ -16,10 +16,11 @@
  */
 #include <gandiva/projector.h>
 #include <gandiva/tree_expr_builder.h>
+#include <iostream>
 #include <memory>
 #include <utility>
 
-#include "shuffle/splitter.h"
+#include "splitter.h"
 
 namespace sparkcolumnarplugin {
 namespace shuffle {
@@ -51,7 +52,10 @@ arrow::Result<std::shared_ptr<Splitter>> Splitter::Make(
 
 Splitter::~Splitter() = default;
 
-arrow::Status Splitter::Init() {
+// ----------------------------------------------------------------------
+// BasePartitionSplitter
+
+arrow::Status BasePartitionSplitter::Init() {
   const auto& fields = schema_->fields();
   ARROW_ASSIGN_OR_RAISE(column_type_id_, ToSplitterTypeId(schema_->fields()));
 
@@ -64,17 +68,14 @@ arrow::Status Splitter::Init() {
       *std::max_element(std::cbegin(remove_null_id), std::cend(remove_null_id));
 
   ARROW_ASSIGN_OR_RAISE(configured_dirs_, GetConfiguredLocalDirs())
-  sub_dir_selection_.assign(configured_dirs_.size(), 0);
 
   partition_writer_.resize(num_partitions_);
-
-  fs_ = std::make_shared<arrow::fs::LocalFileSystem>();
 
   return arrow::Status::OK();
 }
 
-arrow::Status Splitter::DoSplit(const arrow::RecordBatch& rb,
-                                std::vector<int32_t> writer_idx) {
+arrow::Status BasePartitionSplitter::DoSplit(const arrow::RecordBatch& rb,
+                                             std::vector<int32_t> writer_idx) {
   auto num_rows = rb.num_rows();
   auto num_cols = rb.num_columns();
   auto src_addr = std::vector<SrcBuffers>(Type::NUM_TYPES);
@@ -168,7 +169,7 @@ arrow::Status Splitter::DoSplit(const arrow::RecordBatch& rb,
   return arrow::Status::OK();
 }
 
-arrow::Status Splitter::Stop() {
+arrow::Status BasePartitionSplitter::Stop() {
   for (const auto& writer : partition_writer_) {
     if (writer != nullptr) {
       RETURN_NOT_OK(writer->Stop());
@@ -181,20 +182,17 @@ arrow::Status Splitter::Stop() {
   return arrow::Status::OK();
 }
 
-arrow::Result<std::string> Splitter::CreateDataFile() {
+arrow::Result<std::string> BasePartitionSplitter::CreateDataFile() {
   int m = configured_dirs_.size();
-  ARROW_ASSIGN_OR_RAISE(auto data_file,
-                        CreateTempShuffleFile(fs_, configured_dirs_[dir_selection_],
-                                              sub_dir_selection_[dir_selection_]))
-  sub_dir_selection_[dir_selection_] =
-      (sub_dir_selection_[dir_selection_] + 1) % num_sub_dirs_;
+  ARROW_ASSIGN_OR_RAISE(auto dir, CreateRandomSubDir(configured_dirs_[dir_selection_]))
   dir_selection_ = (dir_selection_ + 1) % m;
-  return data_file;
+  return arrow::fs::internal::ConcatAbstractPath(dir, "data");
 }
 
-arrow::Status Splitter::Split(const arrow::RecordBatch& rb) {
+arrow::Status BasePartitionSplitter::Split(const arrow::RecordBatch& rb) {
   ARROW_ASSIGN_OR_RAISE(auto writers, GetNextBatchPartitionWriterIndex(rb));
-  return DoSplit(rb, std::move(writers));
+  RETURN_NOT_OK(DoSplit(rb, std::move(writers)));
+  return arrow::Status::OK();
 }
 
 // ----------------------------------------------------------------------
@@ -255,14 +253,15 @@ arrow::Status HashSplitter::CreateProjector(
   }
   auto hash_expr =
       gandiva::TreeExprBuilder::MakeExpression(hash, arrow::field("pid", arrow::int32()));
-  return gandiva::Projector::Make(schema_, {hash_expr}, &projector_);
+  RETURN_NOT_OK(gandiva::Projector::Make(schema_, {hash_expr}, &projector_));
+  return arrow::Status::OK();
 }
 
 arrow::Result<std::vector<int32_t>> HashSplitter::GetNextBatchPartitionWriterIndex(
     const arrow::RecordBatch& rb) {
   arrow::ArrayVector outputs;
-  TIME_NANO_OR_RAISE(total_compute_pid_time_,
-                     projector_->Evaluate(rb, arrow::default_memory_pool(), &outputs));
+  TIME_MICRO_OR_RAISE(total_compute_pid_time_,
+                      projector_->Evaluate(rb, arrow::default_memory_pool(), &outputs));
   if (outputs.size() != 1) {
     return arrow::Status::Invalid("Projector result should have one field, actual is ",
                                   std::to_string(outputs.size()));
@@ -305,13 +304,15 @@ arrow::Result<std::shared_ptr<FallbackRangeSplitter>> FallbackRangeSplitter::Cre
 arrow::Status FallbackRangeSplitter::Init() {
   input_schema_ = std::move(schema_);
   ARROW_ASSIGN_OR_RAISE(schema_, input_schema_->RemoveField(0))
-  return Splitter::Init();
+  RETURN_NOT_OK(BasePartitionSplitter::Init());
+  return arrow::Status::OK();
 }
 
 arrow::Status FallbackRangeSplitter::Split(const arrow::RecordBatch& rb) {
   ARROW_ASSIGN_OR_RAISE(auto writers, GetNextBatchPartitionWriterIndex(rb));
   ARROW_ASSIGN_OR_RAISE(auto remove_pid, rb.RemoveColumn(0));
-  return DoSplit(*remove_pid, std::move(writers));
+  RETURN_NOT_OK(DoSplit(*remove_pid, std::move(writers)));
+  return arrow::Status::OK();
 }
 
 arrow::Result<std::vector<int32_t>>
