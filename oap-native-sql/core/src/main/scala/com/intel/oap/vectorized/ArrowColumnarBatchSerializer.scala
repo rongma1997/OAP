@@ -23,12 +23,22 @@ import java.nio.ByteBuffer
 import com.intel.oap.expression.ConverterUtils
 import org.apache.arrow.memory.BufferAllocator
 import org.apache.arrow.vector.ipc.ArrowStreamReader
-import org.apache.arrow.vector.{VectorLoader, VectorSchemaRoot}
+import org.apache.arrow.vector.{
+  BaseFixedWidthVector,
+  BaseVariableWidthVector,
+  NullVector,
+  VectorLoader,
+  VectorSchemaRoot
+}
 import org.apache.spark.SparkEnv
 import org.apache.spark.internal.Logging
-import org.apache.spark.serializer.{DeserializationStream, SerializationStream, Serializer, SerializerInstance}
+import org.apache.spark.serializer.{
+  DeserializationStream,
+  SerializationStream,
+  Serializer,
+  SerializerInstance
+}
 import org.apache.spark.sql.execution.metric.SQLMetric
-import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.util.ArrowUtils
 import org.apache.spark.sql.vectorized.{ColumnVector, ColumnarBatch}
 
@@ -37,7 +47,7 @@ import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
 import scala.reflect.ClassTag
 
-class ArrowColumnarBatchSerializer(readBatchNumRows: SQLMetric = null)
+class ArrowColumnarBatchSerializer(readBatchNumRows: SQLMetric)
     extends Serializer
     with Serializable {
 
@@ -53,7 +63,6 @@ private class ArrowColumnarBatchSerializerInstance(readBatchNumRows: SQLMetric)
   override def deserializeStream(in: InputStream): DeserializationStream = {
     new DeserializationStream {
 
-      private val columnBatchSize = SQLConf.get.columnBatchSize
       private val compressionEnabled =
         SparkEnv.get.conf.getBoolean("spark.shuffle.compress", true)
       private val compressionCodec = SparkEnv.get.conf.get("spark.io.compression.codec", "lz4")
@@ -110,7 +119,13 @@ private class ArrowColumnarBatchSerializerInstance(readBatchNumRows: SQLMetric)
 
             // jni call to decompress buffers
             if (compressionEnabled) {
-              decompressVectors()
+              try {
+                decompressVectors()
+              } catch {
+                case e: UnsupportedOperationException =>
+                  this.close()
+                  throw e
+              }
             }
 
             val newFieldVectors = root.getFieldVectors.asScala.map { vector =>
@@ -176,7 +191,16 @@ private class ArrowColumnarBatchSerializerInstance(readBatchNumRows: SQLMetric)
               java.lang.Long.bitCount(validityBuf.getLong(0)) == 0) {
             bufBS.add(bufIdx)
           }
-          vector.getBuffers(false).foreach { buffer =>
+          val buffers = vector match {
+            case fixed: BaseFixedWidthVector =>
+              fixed.getValidityBuffer :: fixed.getDataBuffer :: Nil
+            case variable: BaseVariableWidthVector =>
+              variable.getValidityBuffer :: variable.getOffsetBuffer :: variable.getDataBuffer :: Nil
+            case _ =>
+              throw new UnsupportedOperationException(
+                s"Could not decompress vector of class ${vector.getClass}")
+          }
+          buffers.foreach { buffer =>
             bufAddrs += buffer.memoryAddress()
             // buffer.readableBytes() will return wrong readable length here since it is initialized by
             // data stored in IPC message header, which is not the actual compressed length
