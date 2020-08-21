@@ -71,9 +71,9 @@ class ColumnarSortMergeJoinExec(
   val sparkConf = sparkContext.getConf
   override lazy val metrics = Map(
     "numOutputRows" -> SQLMetrics.createMetric(sparkContext, "number of output rows"),
-    "prepareTime" -> SQLMetrics.createTimingMetric(sparkContext, "time to prepare left list"),
-    "joinTime" -> SQLMetrics.createTimingMetric(sparkContext, "time to merge join"),
-    "totaltime_sortmergejoin" -> SQLMetrics.createTimingMetric(sparkContext, "totaltime_sortmergejoin"))
+    "prepareTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "time to prepare left list"),
+    "joinTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "time to merge join"),
+    "totaltime_sortmergejoin" -> SQLMetrics.createNanoTimingMetric(sparkContext, "totaltime_sortmergejoin"))
 
   val numOutputRows = longMetric("numOutputRows")
   val joinTime = longMetric("joinTime")

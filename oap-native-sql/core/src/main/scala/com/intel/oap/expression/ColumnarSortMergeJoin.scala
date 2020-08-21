@@ -109,7 +109,7 @@ class ColumnarSortMergeJoin(
         build_cb.column(i).asInstanceOf[ArrowWritableColumnVector].retain())
       inputBatchHolder += build_cb
       prober.evaluate(build_rb)
-      prepareTime += NANOSECONDS.toMillis(System.nanoTime() - beforeBuild)
+      prepareTime += (System.nanoTime() - beforeBuild)
       ConverterUtils.releaseArrowRecordBatch(build_rb)
     }
     if (build_cb != null) {
@@ -131,7 +131,7 @@ class ColumnarSortMergeJoin(
     }
     val beforeBuild = System.nanoTime()
     probe_iterator = prober.finishByIterator()
-    prepareTime += NANOSECONDS.toMillis(System.nanoTime() - beforeBuild)
+    prepareTime += (System.nanoTime() - beforeBuild)
 
     new Iterator[ColumnarBatch] {
       override def hasNext: Boolean = {
@@ -151,7 +151,7 @@ class ColumnarSortMergeJoin(
         val output_rb = probe_iterator.process(stream_input_arrow_schema, stream_rb)
 
         ConverterUtils.releaseArrowRecordBatch(stream_rb)
-        joinTime += NANOSECONDS.toMillis(System.nanoTime() - beforeJoin)
+        joinTime += (System.nanoTime() - beforeJoin)
         if (output_rb == null) {
           val resultColumnVectors =
             ArrowWritableColumnVector.allocateColumns(0, resultSchema).toArray
