@@ -80,10 +80,10 @@ class ColumnarBroadcastHashJoinExec(
   val sparkConf = sparkContext.getConf
   override lazy val metrics = Map(
     "numOutputRows" -> SQLMetrics.createMetric(sparkContext, "number of output rows"),
-    "totalTime" -> SQLMetrics.createTimingMetric(sparkContext, "totaltime_broadcastHasedJoin"),
-    "fetchTime" -> SQLMetrics.createTimingMetric(sparkContext, "time to fetch buildSide batch"),
-    "buildTime" -> SQLMetrics.createTimingMetric(sparkContext, "time to build hash map"),
-    "joinTime" -> SQLMetrics.createTimingMetric(sparkContext, "join time"))
+    "totalTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "totaltime_broadcastHasedJoin"),
+    "fetchTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "time to fetch buildSide batch"),
+    "buildTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "time to build hash map"),
+    "joinTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "join time"))
 
   override def supportsColumnar = true
   override def supportCodegen: Boolean = false
@@ -171,7 +171,7 @@ class ColumnarBroadcastHashJoinExec(
       val beforeFetch = System.nanoTime()
       val buildIter =
         new CloseableColumnBatchIterator(ConverterUtils.convertFromNetty(buildInputByteBuf.value))
-      fetchTime += NANOSECONDS.toMillis(System.nanoTime() - beforeFetch)
+      fetchTime += (System.nanoTime() - beforeFetch)
       val vjoinResult = vjoin.columnarJoin(streamIter, buildIter)
       new CloseableColumnBatchIterator(vjoinResult)
     }

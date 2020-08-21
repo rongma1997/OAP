@@ -71,10 +71,10 @@ class ColumnarShuffledHashJoinExec(
   val sparkConf = sparkContext.getConf
   override lazy val metrics = Map(
     "numOutputRows" -> SQLMetrics.createMetric(sparkContext, "number of output rows"),
-    "totalTime" -> SQLMetrics.createTimingMetric(sparkContext, "totaltime_hashjoin"),
-    "fetchTime" -> SQLMetrics.createTimingMetric(sparkContext, "time to fetch batches"),
-    "buildTime" -> SQLMetrics.createTimingMetric(sparkContext, "time to build hash map"),
-    "joinTime" -> SQLMetrics.createTimingMetric(sparkContext, "join time"))
+    "totalTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "totaltime_hashjoin"),
+    "fetchTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "time to fetch batches"),
+    "buildTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "time to build hash map"),
+    "joinTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "join time"))
 
   override def supportsColumnar = true
 

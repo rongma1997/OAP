@@ -87,9 +87,9 @@ class ColumnarSorter(
     if (nextVector != null) {
       nextVector.close()
     }
-    elapse.set(NANOSECONDS.toMillis(total_elapse))
-    sortTime.set(NANOSECONDS.toMillis(sort_elapse))
-    shuffleTime.set(NANOSECONDS.toMillis(shuffle_elapse))
+    elapse.set(total_elapse)
+    sortTime.set((sort_elapse))
+    shuffleTime.set((shuffle_elapse))
     inputBatchHolder.foreach(cb => cb.close())
     if (sorter != null) {
       sorter.close()

@@ -169,11 +169,11 @@ class ColumnarGroupbyHashAggregation(
           aggregator_iterator = aggregator.finishByIterator()
           eval_elapse += System.nanoTime() - beforeFinish
           data_loaded = true
-          aggrTime += NANOSECONDS.toMillis(eval_elapse)
+          aggrTime += (eval_elapse)
         }
         val beforeResultFetch = System.nanoTime()
         resultColumnarBatch = getAggregationResult(aggregator_iterator)
-        aggrTime += NANOSECONDS.toMillis(System.nanoTime() - beforeResultFetch)
+        aggrTime += (System.nanoTime() - beforeResultFetch)
         if (resultColumnarBatch.numRows == 0) {
           resultColumnarBatch.close()
           logInfo(

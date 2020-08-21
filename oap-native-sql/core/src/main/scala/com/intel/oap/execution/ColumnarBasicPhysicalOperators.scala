@@ -88,7 +88,7 @@ case class ColumnarConditionProjectExec(condition: Expression, projectList: Seq[
     "numOutputRows" -> SQLMetrics.createMetric(sparkContext, "number of output rows"),
     "numOutputBatches" -> SQLMetrics.createMetric(sparkContext, "output_batches"),
     "numInputBatches" -> SQLMetrics.createMetric(sparkContext, "input_batches"),
-    "processTime" -> SQLMetrics.createTimingMetric(sparkContext, "totaltime_condproject"))
+    "processTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "totaltime_condproject"))
 
   ColumnarConditionProjector.prebuild(condition, projectList, child.output)
 
