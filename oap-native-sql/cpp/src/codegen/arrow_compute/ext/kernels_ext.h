@@ -225,6 +225,38 @@ class MaxArrayKernel : public KernalBase {
   arrow::compute::FunctionContext* ctx_;
 };
 
+class StddevSampPartialArrayKernel : public KernalBase {
+ public:
+  static arrow::Status Make(arrow::compute::FunctionContext* ctx,
+                            std::shared_ptr<arrow::DataType> data_type,
+                            std::shared_ptr<KernalBase>* out);
+  StddevSampPartialArrayKernel(arrow::compute::FunctionContext* ctx,
+                 std::shared_ptr<arrow::DataType> data_type);
+  arrow::Status Evaluate(const ArrayList& in) override;
+  arrow::Status Finish(ArrayList* out) override;
+
+ private:
+  class Impl;
+  std::unique_ptr<Impl> impl_;
+  arrow::compute::FunctionContext* ctx_;
+};
+
+class StddevSampFinalArrayKernel : public KernalBase {
+ public:
+  static arrow::Status Make(arrow::compute::FunctionContext* ctx,
+                            std::shared_ptr<arrow::DataType> data_type,
+                            std::shared_ptr<KernalBase>* out);
+  StddevSampFinalArrayKernel(arrow::compute::FunctionContext* ctx,
+                 std::shared_ptr<arrow::DataType> data_type);
+  arrow::Status Evaluate(const ArrayList& in) override;
+  arrow::Status Finish(ArrayList* out) override;
+
+ private:
+  class Impl;
+  std::unique_ptr<Impl> impl_;
+  arrow::compute::FunctionContext* ctx_;
+};
+
 class SortArraysToIndicesKernel : public KernalBase {
  public:
   static arrow::Status Make(arrow::compute::FunctionContext* ctx,
@@ -298,6 +330,36 @@ class ConditionedProbeArraysKernel : public KernalBase {
       const std::shared_ptr<arrow::Schema>& result_schema,
       std::shared_ptr<KernalBase>* out);
   ConditionedProbeArraysKernel(
+      arrow::compute::FunctionContext* ctx,
+      const std::vector<std::shared_ptr<arrow::Field>>& left_key_list,
+      const std::vector<std::shared_ptr<arrow::Field>>& right_key_list,
+      const std::shared_ptr<gandiva::Node>& func_node, int join_type,
+      const std::vector<std::shared_ptr<arrow::Field>>& left_field_list,
+      const std::vector<std::shared_ptr<arrow::Field>>& right_field_list,
+      const std::shared_ptr<arrow::Schema>& result_schema);
+  arrow::Status Evaluate(const ArrayList& in) override;
+  arrow::Status MakeResultIterator(
+      std::shared_ptr<arrow::Schema> schema,
+      std::shared_ptr<ResultIterator<arrow::RecordBatch>>* out) override;
+  std::string GetSignature() override;
+  class Impl;
+
+ private:
+  std::unique_ptr<Impl> impl_;
+  arrow::compute::FunctionContext* ctx_;
+};
+class ConditionedJoinArraysKernel : public KernalBase {
+ public:
+  static arrow::Status Make(
+      arrow::compute::FunctionContext* ctx,
+      const std::vector<std::shared_ptr<arrow::Field>>& left_key_list,
+      const std::vector<std::shared_ptr<arrow::Field>>& right_key_list,
+      const std::shared_ptr<gandiva::Node>& func_node, int join_type,
+      const std::vector<std::shared_ptr<arrow::Field>>& left_field_list,
+      const std::vector<std::shared_ptr<arrow::Field>>& right_field_list,
+      const std::shared_ptr<arrow::Schema>& result_schema,
+      std::shared_ptr<KernalBase>* out);
+  ConditionedJoinArraysKernel(
       arrow::compute::FunctionContext* ctx,
       const std::vector<std::shared_ptr<arrow::Field>>& left_key_list,
       const std::vector<std::shared_ptr<arrow::Field>>& right_key_list,

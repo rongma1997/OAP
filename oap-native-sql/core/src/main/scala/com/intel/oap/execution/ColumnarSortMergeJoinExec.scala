@@ -52,66 +52,62 @@ import com.google.common.collect.Lists;
 
 import com.intel.oap.expression._
 import com.intel.oap.vectorized.ExpressionEvaluator
-import org.apache.spark.sql.execution.joins.ShuffledHashJoinExec
+import org.apache.spark.sql.execution.joins._
 import org.apache.spark.sql.execution.joins.{BuildLeft, BuildRight, BuildSide}
 
 /**
  * Performs a hash join of two child relations by first shuffling the data using the join keys.
  */
-class ColumnarShuffledHashJoinExec(
+class ColumnarSortMergeJoinExec(
     leftKeys: Seq[Expression],
     rightKeys: Seq[Expression],
     joinType: JoinType,
-    buildSide: BuildSide,
     condition: Option[Expression],
     left: SparkPlan,
-    right: SparkPlan)
-    extends ShuffledHashJoinExec(leftKeys, rightKeys, joinType, buildSide, condition, left, right) {
+    right: SparkPlan,
+    isSkewJoin: Boolean = false)
+    extends SortMergeJoinExec(leftKeys, rightKeys, joinType, condition, left, right, isSkewJoin) {
 
   val sparkConf = sparkContext.getConf
   override lazy val metrics = Map(
     "numOutputRows" -> SQLMetrics.createMetric(sparkContext, "number of output rows"),
-    "totalTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "totaltime_hashjoin"),
-    "fetchTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "time to fetch batches"),
-    "buildTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "time to build hash map"),
-    "joinTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "join time"))
-
-  override def supportsColumnar = true
+    "prepareTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "time to prepare left list"),
+    "joinTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "time to merge join"),
+    "totaltime_sortmergejoin" -> SQLMetrics.createNanoTimingMetric(sparkContext, "totaltime_sortmergejoin"))
 
   val numOutputRows = longMetric("numOutputRows")
-  val totalTime = longMetric("totalTime")
   val joinTime = longMetric("joinTime")
-  val buildTime = longMetric("buildTime")
-  val fetchTime = longMetric("fetchTime")
+  val prepareTime = longMetric("prepareTime")
+  val totaltime_sortmegejoin = longMetric("totaltime_sortmergejoin")
   val resultSchema = this.schema
 
-  //TODO() Disable code generation
-  //override def supportCodegen: Boolean = false
+  override def supportsColumnar = true
+  override def supportCodegen: Boolean = false
 
   val signature =
-    if (resultSchema.size > 0) {
-      try {
-        ColumnarShuffledHashJoin.prebuild(
-          leftKeys,
-          rightKeys,
-          resultSchema,
-          joinType,
-          buildSide,
-          condition,
-          left,
-          right,
-          sparkConf)
-      } catch {
-        case e: UnsupportedOperationException
-            if e.getMessage == "Unsupport to generate native expression from replaceable expression." =>
-          logWarning(e.getMessage())
-          ""
-        case e =>
-          throw e
-      }
+    if (resultSchema.size > 0 && !leftKeys
+          .filter(expr => bindReference(expr, left.output, true).isInstanceOf[BoundReference])
+          .isEmpty && !rightKeys
+          .filter(expr => bindReference(expr, right.output, true).isInstanceOf[BoundReference])
+          .isEmpty) {
+
+      ColumnarSortMergeJoin.prebuild(
+        leftKeys,
+        rightKeys,
+        resultSchema,
+        joinType,
+        condition,
+        left,
+        right,
+        joinTime,
+        prepareTime,
+        totaltime_sortmegejoin,
+        numOutputRows,
+        sparkConf)
     } else {
       ""
     }
+
   val listJars = if (signature != "") {
     if (sparkContext.listJars.filter(path => path.contains(s"${signature}.jar")).isEmpty) {
       val tempDir = ColumnarPluginConfig.getRandomTempDir
@@ -123,13 +119,12 @@ class ColumnarShuffledHashJoinExec(
   } else {
     List()
   }
+
   listJars.foreach(jar => logInfo(s"Uploaded ${jar}"))
 
   override def doExecuteColumnar(): RDD[ColumnarBatch] = {
-    streamedPlan.executeColumnar().zipPartitions(buildPlan.executeColumnar()) {
+    right.executeColumnar().zipPartitions(left.executeColumnar()) {
       (streamIter, buildIter) =>
-        //val hashed = buildHashedRelation(buildIter)
-        //join(streamIter, hashed, numOutputRows)
         ColumnarPluginConfig.getConf(sparkConf)
         val execTempDir = ColumnarPluginConfig.getTempFile
         val jarList = listJars
@@ -143,36 +138,12 @@ class ColumnarShuffledHashJoinExec(
             s"${execTempDir}/spark-columnar-plugin-codegen-precompile-${signature}.jar"
           })
 
-        val vjoin = ColumnarShuffledHashJoin.create(
-          leftKeys,
-          rightKeys,
-          resultSchema,
-          joinType,
-          buildSide,
-          condition,
-          left,
-          right,
-          jarList,
-          buildTime,
-          joinTime,
-          totalTime,
-          numOutputRows,
-          sparkConf)
-        TaskContext
-          .get()
-          .addTaskCompletionListener[Unit](_ => {
-            vjoin.close()
-          })
-        val vjoinResult = vjoin.columnarJoin(streamIter, buildIter)
+        val vsmj = ColumnarSortMergeJoin.create(leftKeys, rightKeys, resultSchema, joinType, 
+            condition, left, right, isSkewJoin, listJars, joinTime, prepareTime, totaltime_sortmegejoin, numOutputRows, sparkConf)
+        TaskContext.get().addTaskCompletionListener[Unit](_ => {
+        vsmj.close() })
+        val vjoinResult = vsmj.columnarJoin(streamIter, buildIter)
         new CloseableColumnBatchIterator(vjoinResult)
     }
-  }
-
-  override def canEqual(other: Any): Boolean = other.isInstanceOf[ColumnarShuffledHashJoinExec]
-
-  override def equals(other: Any): Boolean = other match {
-    case that: ColumnarShuffledHashJoinExec =>
-      (that canEqual this) && super.equals(that)
-    case _ => false
   }
 }

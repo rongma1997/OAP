@@ -51,8 +51,8 @@ namespace extra {
 
 using ArrayList = std::vector<std::shared_ptr<arrow::Array>>;
 
-///////////////  ConditionedProbeArrays  ////////////////
-class ConditionedProbeArraysKernel::Impl {
+///////////////  ConditionedJoinArrays  ////////////////
+class ConditionedJoinArraysKernel::Impl {
  public:
   Impl(arrow::compute::FunctionContext* ctx,
        const std::vector<std::shared_ptr<arrow::Field>>& left_key_list,
@@ -159,7 +159,7 @@ class ConditionedProbeArraysKernel::Impl {
       std::shared_ptr<CodeGenBase>* out) {
     // generate ddl signature
     std::stringstream func_args_ss;
-    func_args_ss << "<HashJoin>"
+    func_args_ss << "<MergeJoin>"
                  << "[JoinType]" << join_type;
     if (func_node) {
       std::shared_ptr<CodeGenRegister> node_tmp;
@@ -189,10 +189,6 @@ class ConditionedProbeArraysKernel::Impl {
     func_args_ss << "[RightShuffleIndex]";
     for (auto i : right_shuffle_index_list) {
       func_args_ss << i << ",";
-    }
-    func_args_ss << "[ResultOrdinal]";
-    for (auto pair : result_schema_index_list) {
-      func_args_ss << pair.first << "_" << pair.second << ",";
     }
 
 #ifdef DEBUG
@@ -424,23 +420,18 @@ class ConditionedProbeArraysKernel::Impl {
   }
   std::string GetInnerJoin(bool cond_check,
                            const std::vector<int>& left_shuffle_index_list,
-                           const std::vector<int>& right_shuffle_index_list) {
+                           const std::vector<int>& right_shuffle_index_list,
+                           const std::vector<int>& right_key_index_list) {
     std::stringstream ss;
     for (auto i : left_shuffle_index_list) {
-      ss << "if (cached_0_" << i << "_[tmp.array_id]->IsNull(tmp.id)) {" << std::endl;
-      ss << "  RETURN_NOT_OK(builder_0_" << i << "_->AppendNull());" << std::endl;
-      ss << "} else {" << std::endl;
-      ss << "  RETURN_NOT_OK(builder_0_" << i << "_->Append(cached_0_" << i
-         << "_[tmp.array_id]->GetView(tmp.id)));" << std::endl;
-      ss << "}" << std::endl;
+      ss << "RETURN_NOT_OK(builder_0_" << i << "_->Append(cached_0_" << i
+         << "_[tmp.array_id]->GetView(tmp."
+            "id)));"
+         << std::endl;
     }
     for (auto i : right_shuffle_index_list) {
-      ss << "if (cached_1_" << i << "_->IsNull(i)) {" << std::endl;
-      ss << "  RETURN_NOT_OK(builder_1_" << i << "_->AppendNull());" << std::endl;
-      ss << "} else {" << std::endl;
-      ss << "  RETURN_NOT_OK(builder_1_" << i << "_->Append(cached_1_" << i
+      ss << "RETURN_NOT_OK(builder_1_" << i << "_->Append(cached_1_" << i
          << "_->GetView(i)));" << std::endl;
-      ss << "}" << std::endl;
     }
     std::string shuffle_str;
     if (cond_check) {
@@ -450,24 +441,40 @@ class ConditionedProbeArraysKernel::Impl {
                     R"(
                 out_length += 1;
               }
+              left_it++;
+            }
+            left_it = old_it;
       )";
     } else {
       shuffle_str = R"(
               )" + ss.str() +
                     R"(
-              out_length += 1;
+              left_it++;
+              out_length += 1;}
+              left_it = old_it;
       )";
     }
+    std::string right_value;
+    if (right_key_index_list.size() > 1) {
+      //TODO: fix key size
+      right_value = "list_item{typed_array_0->GetView(i), typed_array_1->GetView(i)}";
+    } else {
+      right_value = "typed_array_0->GetView(i)";
+    }
     return R"(
-        if (!typed_array->IsNull(i)) {
-          auto index = hash_table_->Get(typed_array->GetView(i));
-          if (index != -1) {
-            for (auto tmp : (*memo_index_to_arrayid_)[index]) {
-              )" +
-           shuffle_str + R"(
+      list_item right_content =)" + right_value + R"(;
+        if (!typed_array_0->IsNull(i)) {
+            while (*left_it < right_content && left_it != left_list_->end()) {
+            left_it++;
             }
+            auto old_it = left_it;
+            while(*left_it == right_content && left_it != left_list_->end()) {
+              auto tmp = (*idx_to_arrarid_)[std::distance(left_list_->begin(), left_it)];)" +
+           shuffle_str + R"(
+              //if (*left_it > right_content && left_it != left_list_->end()){
+              //continue;
+              //}
           }
-        }
   )";
   }
   std::string GetOuterJoin(bool cond_check,
@@ -477,24 +484,15 @@ class ConditionedProbeArraysKernel::Impl {
     std::stringstream left_valid_ss;
     std::stringstream right_valid_ss;
     for (auto i : left_shuffle_index_list) {
-      left_valid_ss << "if (cached_0_" << i << "_[tmp.array_id]->IsNull(tmp.id)) {"
+      left_valid_ss << "RETURN_NOT_OK(builder_0_" << i << "_->Append(cached_0_" << i
+                    << "_[tmp.array_id]->GetView(tmp."
+                       "id)));"
                     << std::endl;
-      left_valid_ss << "  RETURN_NOT_OK(builder_0_" << i << "_->AppendNull());"
-                    << std::endl;
-      left_valid_ss << "} else {" << std::endl;
-      left_valid_ss << "  RETURN_NOT_OK(builder_0_" << i << "_->Append(cached_0_" << i
-                    << "_[tmp.array_id]->GetView(tmp.id)));" << std::endl;
-      left_valid_ss << "}" << std::endl;
       left_null_ss << "RETURN_NOT_OK(builder_0_" << i << "_->AppendNull());" << std::endl;
     }
     for (auto i : right_shuffle_index_list) {
-      right_valid_ss << "if (cached_1_" << i << "_->IsNull(i)) {" << std::endl;
-      right_valid_ss << "  RETURN_NOT_OK(builder_1_" << i << "_->AppendNull());"
-                     << std::endl;
-      right_valid_ss << "} else {" << std::endl;
-      right_valid_ss << "  RETURN_NOT_OK(builder_1_" << i << "_->Append(cached_1_" << i
+      right_valid_ss << "RETURN_NOT_OK(builder_1_" << i << "_->Append(cached_1_" << i
                      << "_->GetView(i)));" << std::endl;
-      right_valid_ss << "}" << std::endl;
     }
     std::string shuffle_str;
     if (cond_check) {
@@ -513,21 +511,46 @@ class ConditionedProbeArraysKernel::Impl {
       )";
     }
     return R"(
-        int32_t index;
-        if (!typed_array->IsNull(i)) {
-          index = hash_table_->Get(typed_array->GetView(i));
-        } else {
-          index = hash_table_->GetNull();
-        }
-        if (index == -1) {
-          )" +
-           left_null_ss.str() + right_valid_ss.str() + R"(
+      if (!typed_array_0->IsNull(i)) {
+         while (*left_it < typed_array_0->GetView(i) && left_it != left_list_->end()) {
+    left_it++;
+  }
+  auto old_it = left_it;
+  while(*left_it == typed_array_0->GetView(i) && left_it != left_list_->end()) {
+    auto tmp = (*idx_to_arrarid_)[std::distance(left_list_->begin(), left_it)];
+          )" + //TODO: cond check
+           left_valid_ss.str() + right_valid_ss.str() + R"(
+          left_it++;
+          last_match_idx = i;
           out_length += 1;
-        } else {
-          for (auto tmp : (*memo_index_to_arrayid_)[index]) {
-            )" +
-           shuffle_str + R"(
+        }
+        left_it = old_it;
+        if(*left_it > typed_array_0->GetView(i) && left_it != left_list_->end() ) {
+          if (last_match_idx == i) {
+            continue;
           }
+          auto tmp = (*idx_to_arrarid_)[std::distance(left_list_->begin(), left_it)];
+            )" +
+           left_null_ss.str() + right_valid_ss.str() + R"(
+             out_length += 1;
+          }
+          if (left_it == left_list_->end()) {
+            )" +
+            left_null_ss.str() + right_valid_ss.str() + R"(
+            out_length += 1;
+          }
+
+        } else {
+          auto old_it = left_it;
+          while(*left_it == typed_array_0->GetView(i) && left_it != left_list_->end()) { 
+            auto tmp = (*idx_to_arrarid_)[std::distance(left_list_->begin(), left_it)];
+            )"
+          + left_valid_ss.str() + right_valid_ss.str()
+          + R"(
+            left_it++;
+            out_length += 1;
+            }
+          left_it = old_it;
         }
   )";
   }
@@ -540,45 +563,58 @@ class ConditionedProbeArraysKernel::Impl {
       left_null_ss << "RETURN_NOT_OK(builder_0_" << i << "_->AppendNull());" << std::endl;
     }
     for (auto i : right_shuffle_index_list) {
-      right_valid_ss << "if (cached_1_" << i << "_->IsNull(i)) {" << std::endl;
-      right_valid_ss << "  RETURN_NOT_OK(builder_1_" << i << "_->AppendNull());"
-                     << std::endl;
-      right_valid_ss << "} else {" << std::endl;
-      right_valid_ss << "  RETURN_NOT_OK(builder_1_" << i << "_->Append(cached_1_" << i
+      right_valid_ss << "RETURN_NOT_OK(builder_1_" << i << "_->Append(cached_1_" << i
                      << "_->GetView(i)));" << std::endl;
-      right_valid_ss << "}" << std::endl;
     }
     std::string shuffle_str;
     if (cond_check) {
       shuffle_str = R"(
-        } else {
-          bool found = false;
-          for (auto tmp : (*memo_index_to_arrayid_)[index]) {
+          hasequaled = true;
+          auto tmp = (*idx_to_arrarid_)[std::distance(left_list_->begin(), left_it)];
             if (ConditionCheck(tmp, i)) {
               found = true;
               break;
             }
-          }
-          if (!found) {
+            left_it++;
+    last_match_idx = i;
+    }
+          if (!found && hasequaled) {
               )" + left_null_ss.str() +
                     right_valid_ss.str() + R"(
             out_length += 1;
           }
       )";
+    } else {
+      shuffle_str = R"(
+        left_it++;
+        last_match_idx = i;
+        }
+      )";
     }
     return R"(
-        int32_t index;
-        if (!typed_array->IsNull(i)) {
-          index = hash_table_->Get(typed_array->GetView(i));
-        } else {
-          index = hash_table_->GetNull();
-        }
-        if (index == -1) {
+  while (*left_it < typed_array_0->GetView(i) && left_it != left_list_->end()) {
+    left_it++;
+  }
+
+  auto old_it = left_it;
+  bool found = false;
+  bool hasequaled = false;
+  while (*left_it == typed_array_0->GetView(i) && left_it != left_list_->end()) {
+    )" +
+    shuffle_str
+  +R"(
+    left_it = old_it;
+  if (*left_it > typed_array_0->GetView(i) && left_it != left_list_->end() ) {
+    if (last_match_idx == i) {
+      continue;
+    }
           )" +
            left_null_ss.str() + right_valid_ss.str() + R"(
+          out_length += 1; }
+  if (left_it == left_list_->end()) {
+          )" + 
+            left_null_ss.str() + right_valid_ss.str() + R"(
           out_length += 1;
-          )" +
-           shuffle_str + R"(
         }
   )";
   }
@@ -590,40 +626,46 @@ class ConditionedProbeArraysKernel::Impl {
       ss << "RETURN_NOT_OK(builder_0_" << i << "_->AppendNull());" << std::endl;
     }
     for (auto i : right_shuffle_index_list) {
-      ss << "if (cached_1_" << i << "_->IsNull(i)) {" << std::endl;
-      ss << "  RETURN_NOT_OK(builder_1_" << i << "_->AppendNull());" << std::endl;
-      ss << "} else {" << std::endl;
-      ss << "  RETURN_NOT_OK(builder_1_" << i << "_->Append(cached_1_" << i
+      ss << "RETURN_NOT_OK(builder_1_" << i << "_->Append(cached_1_" << i
          << "_->GetView(i)));" << std::endl;
-      ss << "}" << std::endl;
     }
     std::string shuffle_str;
     if (cond_check) {
       shuffle_str = R"(
-            for (auto tmp : (*memo_index_to_arrayid_)[index]) {
+        while (*left_it == typed_array_0->GetView(i) && left_it != left_list_->end()) {
+            auto tmp = (*idx_to_arrarid_)[std::distance(left_list_->begin(), left_it)]; 
               if (ConditionCheck(tmp, i)) {
                 )" + ss.str() +
                     R"(
                 out_length += 1;
                 break;
               }
-            }
       )";
     } else {
       shuffle_str = R"(
+        if (*left_it == typed_array_0->GetView(i) && left_it != left_list_->end()) {
               )" + ss.str() +
                     R"(
               out_length += 1;
       )";
     }
     return R"(
-        if (!typed_array->IsNull(i)) {
-          auto index = hash_table_->Get(typed_array->GetView(i));
-          if (index != -1) {
-                )" +
-           shuffle_str + R"(
-          }
-        }
+             if (!typed_array_0->IsNull(i)) {
+  while (*left_it < typed_array_0->GetView(i) && left_it != left_list_->end()) {
+    left_it++;
+  }
+  
+  auto old_it = left_it;
+  )" +
+    shuffle_str + R"(
+      left_it++;
+  }
+  left_it = old_it;
+  //if (*left_it > typed_array_0->GetView(i) && left_it != left_list_->end() ) {
+  //  continue;
+  //
+  //      }
+      }
   )";
   }
   std::string GetExistenceJoin(bool cond_check,
@@ -643,13 +685,8 @@ class ConditionedProbeArraysKernel::Impl {
                        << std::endl;
 
     for (auto i : right_shuffle_index_list) {
-      right_valid_ss << "if (cached_1_" << i << "_->IsNull(i)) {" << std::endl;
-      right_valid_ss << "  RETURN_NOT_OK(builder_1_" << i << "_->AppendNull());"
-                     << std::endl;
-      right_valid_ss << "} else {" << std::endl;
-      right_valid_ss << "  RETURN_NOT_OK(builder_1_" << i << "_->Append(cached_1_" << i
+      right_valid_ss << "RETURN_NOT_OK(builder_1_" << i << "_->Append(cached_1_" << i
                      << "_->GetView(i)));" << std::endl;
-      right_valid_ss << "}" << std::endl;
     }
     std::string shuffle_str;
     if (cond_check) {
@@ -669,8 +706,8 @@ class ConditionedProbeArraysKernel::Impl {
     }
     return R"(
         int32_t index;
-        if (!typed_array->IsNull(i)) {
-          index = hash_table_->Get(typed_array->GetView(i));
+        if (!typed_array_0->IsNull(i)) {
+          index = hash_table_->Get(typed_array_0->GetView(i));
         } else {
           index = hash_table_->GetNull();
         }
@@ -686,11 +723,12 @@ class ConditionedProbeArraysKernel::Impl {
   }
   std::string GetProcessProbe(int join_type, bool cond_check,
                               const std::vector<int>& left_shuffle_index_list,
-                              const std::vector<int>& right_shuffle_index_list) {
+                              const std::vector<int>& right_shuffle_index_list,
+                              const std::vector<int>& right_key_index_list) {
     switch (join_type) {
       case 0: { /*Inner Join*/
         return GetInnerJoin(cond_check, left_shuffle_index_list,
-                            right_shuffle_index_list);
+                            right_shuffle_index_list, right_key_index_list);
       } break;
       case 1: { /*Outer Join*/
         return GetOuterJoin(cond_check, left_shuffle_index_list,
@@ -771,6 +809,46 @@ class ConditionedProbeArraysKernel::Impl {
     auto field = field_list[key_index_list[0]];
     return GetCTypeString(field->type());
   }
+  std::string GetTupleStr(bool multiple_cols, int size){
+    std::stringstream ss;
+    std::string tuple_str;
+    if (multiple_cols) {
+      tuple_str = "std::make_tuple";
+    }
+    if (multiple_cols) {
+      for (int i = 0; i < size ; i++) {
+        std::string local_tuple = "(typed_array_"  + std::to_string(i) + "->GetView(cur_id_),";
+        tuple_str += local_tuple;
+      }
+    } else {
+      tuple_str += "typed_array_0->GetView(cur_id_),";
+    }
+    tuple_str.erase(tuple_str.end() -1, tuple_str.end());
+    if (multiple_cols) {
+      tuple_str += "))";
+    }
+
+    ss << std::endl << "left_list_->emplace_back(" << tuple_str << ");" << std::endl;
+    return ss.str();
+  }
+  std::string GetTypedArray(bool multiple_cols, int idx, std::vector<int> key_list,
+                            std::vector<std::shared_ptr<arrow::Field>> field_list) {
+    std::stringstream ss;
+    if (multiple_cols) {
+      for (int i = 0; i< key_list.size(); i++){
+        ss << "auto typed_array" << "_" << i <<  " = std::make_shared<" << 
+        GetTypeString(field_list[key_list[i]]->type(), "Array") << ">(in[" << key_list[i] <<"]);" 
+        << std::endl;
+      }
+      
+    } else {
+      ss << "auto typed_array_0 = std::make_shared<"
+      << GetTypeString(field_list[key_list[0]]->type(), "Array")
+      << ">(in[" << idx << "]);"
+         << std::endl;
+    }
+    return ss.str();
+  }
   std::string GetTypedArray(bool multiple_cols, std::string index, int i,
                             std::string data_type,
                             std::string evaluate_encode_join_key_str) {
@@ -781,7 +859,7 @@ class ConditionedProbeArraysKernel::Impl {
       ss << "std::shared_ptr<arrow::Array> hash_in;" << std::endl;
       ss << "RETURN_NOT_OK(hash_kernel_->Evaluate(concat_kernel_arr_list, &hash_in));"
          << std::endl;
-      ss << "auto typed_array = std::make_shared<Int64Array>(hash_in);" << std::endl;
+      ss << "auto typed_array = std::make_shared<Int32Array>(hash_in);" << std::endl;
     } else {
       ss << "auto typed_array = std::make_shared<" << data_type << ">(in[" << i << "]);"
          << std::endl;
@@ -801,25 +879,41 @@ class ConditionedProbeArraysKernel::Impl {
     std::vector<int> right_cond_index_list;
     bool cond_check = false;
     bool multiple_cols = (left_key_index_list.size() > 1);
-    std::string hash_map_include_str = R"(#include "precompile/sparse_hash_map.h")";
+    std::string list_tiem_str;
+
+    std::string hash_map_include_str = "";
+    
     std::string hash_map_type_str =
-        "SparseHashMap<" + GetCTypeString(arrow::int64()) + ">";
-    std::string hash_map_define_str =
-        "std::make_shared<" + hash_map_type_str + ">(ctx_->memory_pool());";
-    if (!multiple_cols) {
-      if (left_field_list[left_key_index_list[0]]->type()->id() == arrow::Type::STRING) {
-        hash_map_type_str =
-            GetTypeString(left_field_list[left_key_index_list[0]]->type(), "") +
-            "HashMap";
-        hash_map_include_str = R"(#include "precompile/hash_map.h")";
-      } else {
-        hash_map_type_str =
-            "SparseHashMap<" +
-            GetCTypeString(left_field_list[left_key_index_list[0]]->type()) + ">";
+        GetCTypeString(left_field_list[left_key_index_list[0]]->type());
+    list_tiem_str = R"(
+      typedef )" + hash_map_type_str + " list_item;";
+    std::vector<std::string> tuple_types;
+    
+    if (multiple_cols) {
+      list_tiem_str = R"(
+        #include <tuple>)";
+      
+      for (auto &key : left_key_index_list) {
+        tuple_types.push_back(GetCTypeString(left_field_list[key]->type()));
       }
-      hash_map_define_str =
-          "std::make_shared<" + hash_map_type_str + ">(ctx_->memory_pool());";
+      std::string tuple_define_str = "std::tuple<";
+      for (auto type : tuple_types) {
+        tuple_define_str += type;
+        tuple_define_str += ",";
+      }
+      //remove the ending ','
+      tuple_define_str.erase(tuple_define_str.end()-1, tuple_define_str.end());
+
+      list_tiem_str += R"(
+        typedef )" + tuple_define_str + "> list_item;";
+    } else {
+      tuple_types.push_back(hash_map_type_str);
     }
+
+    hash_map_include_str += list_tiem_str;
+
+    std::string hash_map_define_str = "std::make_shared<std::vector<list_item>>();";
+    //TODO: fix multi columns case
     std::string condition_check_str;
     if (func_node) {
       condition_check_str =
@@ -828,7 +922,7 @@ class ConditionedProbeArraysKernel::Impl {
       cond_check = true;
     }
     auto process_probe_str = GetProcessProbe(
-        join_type, cond_check, left_shuffle_index_list, right_shuffle_index_list);
+        join_type, cond_check, left_shuffle_index_list, right_shuffle_index_list, right_key_index_list);
     auto left_cache_index_list =
         MergeKeyIndexList(left_cond_index_list, left_shuffle_index_list);
     auto right_cache_index_list =
@@ -862,19 +956,24 @@ class ConditionedProbeArraysKernel::Impl {
     auto result_iter_cached_define_str =
         GetResultIterCachedDefine(left_cache_codegen_list, right_shuffle_codegen_list);
     auto evaluate_get_typed_array_str = GetTypedArray(
+        multiple_cols, left_key_index_list[0], left_key_index_list, left_field_list);
+    auto process_get_typed_array_str = GetTypedArray(
+        multiple_cols, right_key_index_list[0], right_key_index_list, right_field_list);
+    auto evaluate_get_typed_array_str1 = GetTypedArray(
         multiple_cols, "0_" + std::to_string(left_key_index_list[0]),
         left_key_index_list[0],
         GetTypeString(left_field_list[left_key_index_list[0]]->type(), "Array"),
         evaluate_encode_join_key_str);
-    auto process_get_typed_array_str = GetTypedArray(
+    auto process_get_typed_array_str1 = GetTypedArray(
         multiple_cols, "1_" + std::to_string(right_key_index_list[0]),
         right_key_index_list[0],
         GetTypeString(left_field_list[left_key_index_list[0]]->type(), "Array"),
         process_encode_join_key_str);
+    auto make_tuple_str = GetTupleStr(multiple_cols, left_key_index_list.size());
+
     return BaseCodes() + R"(
 #include "codegen/arrow_compute/ext/array_item_index.h"
 #include "precompile/builder.h"
-#include "precompile/hash_arrays_kernel.h"
 )" + hash_map_include_str +
            R"(
 using namespace sparkcolumnarplugin::precompile;
@@ -882,16 +981,11 @@ using namespace sparkcolumnarplugin::precompile;
 class TypedProberImpl : public CodeGenBase {
  public:
   TypedProberImpl(arrow::compute::FunctionContext *ctx) : ctx_(ctx) {
-    hash_table_ = )" +
+    left_list_ = )" +
            hash_map_define_str +
-           (multiple_cols ? R"(
-    // Create Hash Kernel
-    auto field_list = {)" + join_key_type_list_define_str +
-                                R"(};
-    hash_kernel_ = std::make_shared<HashArraysKernel>(ctx_->memory_pool(), field_list);)"
-                          : "") +
            R"(
-
+    left_list_->reserve(3000000);
+    idx_to_arrarid_.reserve(3000000);
   }
   ~TypedProberImpl() {}
 
@@ -900,42 +994,13 @@ class TypedProberImpl : public CodeGenBase {
            evaluate_get_typed_array_str +
            R"(
 
-    auto insert_on_found = [this](int32_t i) {
-      memo_index_to_arrayid_[i].emplace_back(cur_array_id_, cur_id_);
-    };
-    auto insert_on_not_found = [this](int32_t i) {
-      num_items_++;
-      memo_index_to_arrayid_.push_back(
-          {ArrayItemIndex(cur_array_id_, cur_id_)});
-    };
-
     cur_id_ = 0;
-    int memo_index = 0;
-    if (typed_array->null_count() == 0) {
-      for (; cur_id_ < typed_array->length(); cur_id_++) {
-        hash_table_->GetOrInsert(typed_array->GetView(cur_id_), [](int32_t){},
-                                 [](int32_t){}, &memo_index);
-        if (memo_index < num_items_) {
-          insert_on_found(memo_index);
-        } else {
-          insert_on_not_found(memo_index);
-        }
-      }
-    } else {
-      for (; cur_id_ < typed_array->length(); cur_id_++) {
-        if (typed_array->IsNull(cur_id_)) {
-          hash_table_->GetOrInsertNull([](int32_t){}, [](int32_t){});
-        } else {
-          hash_table_->GetOrInsert(typed_array->GetView(cur_id_),
-                                   [](int32_t){}, [](int32_t){},
-                                   &memo_index);
-        if (memo_index < num_items_) {
-          insert_on_found(memo_index);
-        } else {
-          insert_on_not_found(memo_index);
-        }
-        }
-      }
+    for (; cur_id_ < typed_array_0->length(); cur_id_++) {)"
+    + make_tuple_str +
+    R"(
+      
+      idx_to_arrarid_.emplace_back(cur_array_id_, cur_id_);
+      idx++;
     }
     cur_array_id_++;
     return arrow::Status::OK();
@@ -945,7 +1010,7 @@ class TypedProberImpl : public CodeGenBase {
       std::shared_ptr<arrow::Schema> schema,
       std::shared_ptr<ResultIterator<arrow::RecordBatch>> *out) override {
     *out = std::make_shared<ProberResultIterator>(
-        ctx_, schema, hash_kernel_, hash_table_, &memo_index_to_arrayid_)" +
+        ctx_, schema, left_list_, &idx_to_arrarid_)" +
            finish_cached_parameter_str + R"(
     );
     return arrow::Status::OK();
@@ -954,12 +1019,11 @@ class TypedProberImpl : public CodeGenBase {
 private:
   uint64_t cur_array_id_ = 0;
   uint64_t cur_id_ = 0;
+  uint64_t idx = 0;
   uint64_t num_items_ = 0;
   arrow::compute::FunctionContext *ctx_;
-  std::shared_ptr<HashArraysKernel> hash_kernel_;
-  std::shared_ptr<)" +
-           hash_map_type_str + R"(> hash_table_;
-  std::vector<std::vector<ArrayItemIndex>> memo_index_to_arrayid_;
+  std::shared_ptr<std::vector<list_item>> left_list_;
+  std::vector<ArrayItemIndex> idx_to_arrarid_;
   )" + impl_cached_define_str +
            R"( 
 
@@ -968,14 +1032,11 @@ private:
     ProberResultIterator(
         arrow::compute::FunctionContext *ctx,
         std::shared_ptr<arrow::Schema> schema,
-        std::shared_ptr<HashArraysKernel> hash_kernel,
-        std::shared_ptr<)" +
-           hash_map_type_str + R"(> hash_table,
-        std::vector<std::vector<ArrayItemIndex>> *memo_index_to_arrayid)" +
+        std::shared_ptr<std::vector<list_item>> left_list,
+        std::vector<ArrayItemIndex> *idx_to_arrarid)" +
            result_iter_params_str + R"(
         )
-        : ctx_(ctx), result_schema_(schema), hash_kernel_(hash_kernel), hash_table_(hash_table),
-          memo_index_to_arrayid_(memo_index_to_arrayid) {
+        : ctx_(ctx), result_schema_(schema), left_list_(left_list), idx_to_arrarid_(idx_to_arrarid) {
             )" +
            result_iter_set_str + result_iter_prepare_str + R"(
     }
@@ -990,6 +1051,8 @@ private:
            process_get_typed_array_str +
            R"(
       auto length = cached_1_0_->length();
+      auto left_it = left_list_->begin();
+      int last_match_idx = -1;
 
       for (int i = 0; i < length; i++) {)" +
            process_probe_str + R"(
@@ -1007,10 +1070,8 @@ private:
   private:
     arrow::compute::FunctionContext *ctx_;
     std::shared_ptr<arrow::Schema> result_schema_;
-    std::shared_ptr<HashArraysKernel> hash_kernel_;
-    std::shared_ptr<)" +
-           hash_map_type_str + R"(> hash_table_;
-    std::vector<std::vector<ArrayItemIndex>> *memo_index_to_arrayid_;
+    std::shared_ptr<std::vector<list_item>> left_list_;
+    std::vector<ArrayItemIndex> *idx_to_arrarid_;
 )" + result_iter_cached_define_str +
            R"(
       )" + condition_check_str +
@@ -1026,7 +1087,7 @@ extern "C" void MakeCodeGen(arrow::compute::FunctionContext *ctx,
   }
 };
 
-arrow::Status ConditionedProbeArraysKernel::Make(
+arrow::Status ConditionedJoinArraysKernel::Make(
     arrow::compute::FunctionContext* ctx,
     const std::vector<std::shared_ptr<arrow::Field>>& left_key_list,
     const std::vector<std::shared_ptr<arrow::Field>>& right_key_list,
@@ -1035,13 +1096,13 @@ arrow::Status ConditionedProbeArraysKernel::Make(
     const std::vector<std::shared_ptr<arrow::Field>>& right_field_list,
     const std::shared_ptr<arrow::Schema>& result_schema,
     std::shared_ptr<KernalBase>* out) {
-  *out = std::make_shared<ConditionedProbeArraysKernel>(
+  *out = std::make_shared<ConditionedJoinArraysKernel>(
       ctx, left_key_list, right_key_list, func_node, join_type, left_field_list,
       right_field_list, result_schema);
   return arrow::Status::OK();
 }
 
-ConditionedProbeArraysKernel::ConditionedProbeArraysKernel(
+ConditionedJoinArraysKernel::ConditionedJoinArraysKernel(
     arrow::compute::FunctionContext* ctx,
     const std::vector<std::shared_ptr<arrow::Field>>& left_key_list,
     const std::vector<std::shared_ptr<arrow::Field>>& right_key_list,
@@ -1051,20 +1112,20 @@ ConditionedProbeArraysKernel::ConditionedProbeArraysKernel(
     const std::shared_ptr<arrow::Schema>& result_schema) {
   impl_.reset(new Impl(ctx, left_key_list, right_key_list, func_node, join_type,
                        left_field_list, right_field_list, result_schema));
-  kernel_name_ = "ConditionedProbeArraysKernel";
+  kernel_name_ = "ConditionedJoinArraysKernel";
 }
 
-arrow::Status ConditionedProbeArraysKernel::Evaluate(const ArrayList& in) {
+arrow::Status ConditionedJoinArraysKernel::Evaluate(const ArrayList& in) {
   return impl_->Evaluate(in);
 }
 
-arrow::Status ConditionedProbeArraysKernel::MakeResultIterator(
+arrow::Status ConditionedJoinArraysKernel::MakeResultIterator(
     std::shared_ptr<arrow::Schema> schema,
     std::shared_ptr<ResultIterator<arrow::RecordBatch>>* out) {
   return impl_->MakeResultIterator(schema, out);
 }
 
-std::string ConditionedProbeArraysKernel::GetSignature() { return impl_->GetSignature(); }
+std::string ConditionedJoinArraysKernel::GetSignature() { return impl_->GetSignature(); }
 }  // namespace extra
 }  // namespace arrowcompute
 }  // namespace codegen

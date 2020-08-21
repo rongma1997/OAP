@@ -294,6 +294,7 @@ case class RowToArrowColumnarExec(child: SparkPlan) extends UnaryExecNode {
               elapse += System.nanoTime() - start
               rowCount += 1
             }
+            vectors.foreach(v => v.asInstanceOf[ArrowWritableColumnVector].setValueCount(numRows))
             processTime.set((elapse))
             numInputRows += rowCount
             numOutputBatches += 1

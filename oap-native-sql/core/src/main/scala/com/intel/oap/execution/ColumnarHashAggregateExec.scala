@@ -137,8 +137,6 @@ class ColumnarHashAggregateExec(
   override def doExecuteColumnar(): RDD[ColumnarBatch] = {
     child.executeColumnar().mapPartitionsWithIndex { (partIndex, iter) =>
       val hasInput = iter.hasNext
-      logInfo(
-        s"\ngroupingExpressions: $groupingExpressions,\noriginalInputAttributes: ${child.output},\naggregateExpressions: $aggregateExpressions,\naggregateAttributes: $aggregateAttributes,\nresultExpressions: $resultExpressions, \noutput: $output")
       val res = if (!hasInput) {
         // This is a grouped aggregate and the input iterator is empty,
         // so return an empty iterator.
@@ -150,7 +148,7 @@ class ColumnarHashAggregateExec(
           val execTempDir = ColumnarPluginConfig.getTempFile
           val jarList = listJars
             .map(jarUrl => {
-              logWarning(s"Get Codegened library Jar ${jarUrl}")
+              logInfo(s"HashAggregate Get Codegened library Jar ${jarUrl}")
               UserAddedJarUtils.fetchJarFromSpark(
                 jarUrl,
                 execTempDir,
@@ -209,10 +207,7 @@ class ColumnarHashAggregateExec(
 
   override def equals(other: Any): Boolean = other match {
     case that: ColumnarHashAggregateExec =>
-      (that canEqual this) && (that eq this)
+      (that canEqual this) && super.equals(that)
     case _ => false
   }
-
-  override def hashCode(): Int = System.identityHashCode(this)
-
 }

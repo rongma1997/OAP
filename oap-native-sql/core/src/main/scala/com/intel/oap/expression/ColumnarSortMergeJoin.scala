@@ -21,10 +21,12 @@ import java.util.concurrent.TimeUnit._
 
 import com.intel.oap.ColumnarPluginConfig
 import com.intel.oap.vectorized.ArrowWritableColumnVector
+
 import org.apache.spark.TaskContext
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.codegen._
+import org.apache.spark.sql.catalyst.expressions.BindReferences.bindReferences
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.plans._
 import org.apache.spark.sql.catalyst.plans.physical._
@@ -33,10 +35,9 @@ import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.joins.{BuildLeft, BuildRight, BuildSide}
 
 import scala.collection.JavaConverters._
-import org.apache.spark.{SparkConf, SparkContext}
+import org.apache.spark.SparkConf
 import org.apache.spark.internal.Logging
-import org.apache.spark.sql.vectorized.{ColumnVector, ColumnarBatch}
-
+import org.apache.spark.sql.vectorized.{ColumnarBatch, ColumnVector}
 import scala.collection.mutable.ListBuffer
 import org.apache.arrow.vector.ipc.message.ArrowFieldNode
 import org.apache.arrow.vector.ipc.message.ArrowRecordBatch
@@ -45,26 +46,36 @@ import org.apache.arrow.vector.types.pojo.Field
 import org.apache.arrow.vector.types.pojo.Schema
 import org.apache.arrow.gandiva.expression._
 import org.apache.arrow.gandiva.evaluator._
+
 import io.netty.buffer.ArrowBuf
-import com.google.common.collect.Lists
-import org.apache.spark.sql.types.{DataType, DecimalType, StructType}
+import com.google.common.collect.Lists;
+
+import org.apache.spark.sql.types.{DataType, StructType}
 import com.intel.oap.vectorized.ExpressionEvaluator
 import com.intel.oap.vectorized.BatchIterator
 
 /**
- * Performs a hash join of two child relations by first shuffling the data using the join keys.
+ * Performs a sort merge join of two child relations.
  */
-class ColumnarShuffledHashJoin(
+class ColumnarSortMergeJoin(
     prober: ExpressionEvaluator,
     stream_input_arrow_schema: Schema,
     output_arrow_schema: Schema,
+    leftKeys: Seq[Expression],
+    rightKeys: Seq[Expression],
     resultSchema: StructType,
-    buildTime: SQLMetric,
+    joinType: JoinType,
+    conditionOption: Option[Expression],
+    left: SparkPlan,
+    right: SparkPlan,
+    isSkewJoin: Boolean,
     joinTime: SQLMetric,
-    totalTime: SQLMetric,
+    prepareTime: SQLMetric,
+    totaltime_sortmergejoin: SQLMetric,
     totalOutputNumRows: SQLMetric,
     sparkConf: SparkConf)
     extends Logging {
+  ColumnarPluginConfig.getConf(sparkConf)
   var probe_iterator: BatchIterator = _
   var build_cb: ColumnarBatch = null
   var last_cb: ColumnarBatch = null
@@ -72,38 +83,33 @@ class ColumnarShuffledHashJoin(
   val inputBatchHolder = new ListBuffer[ColumnarBatch]()
 
   def columnarJoin(
-      streamIter: Iterator[ColumnarBatch],
-      buildIter: Iterator[ColumnarBatch]): Iterator[ColumnarBatch] = {
+    streamIter: Iterator[ColumnarBatch],
+    buildIter: Iterator[ColumnarBatch]): Iterator[ColumnarBatch] = {
 
-    var _buildTime: Long = 0
 
-    while (buildIter.hasNext) {
+    val (realbuildIter, realstreamIter) = joinType match {
+      case LeftSemi =>
+        (streamIter, buildIter)
+      case LeftOuter =>
+        (streamIter, buildIter)
+      case LeftAnti =>
+        (streamIter, buildIter)
+      case _ =>
+        (buildIter, streamIter)
+    }
+
+    while (realbuildIter.hasNext) {
       if (build_cb != null) {
         build_cb = null
       }
-      build_cb = buildIter.next()
-      if (build_cb == null) {
-        val res = new Iterator[ColumnarBatch] {
-          override def hasNext: Boolean = {
-            false
-          }
-
-          override def next(): ColumnarBatch = {
-            val resultColumnVectors = ArrowWritableColumnVector
-              .allocateColumns(0, resultSchema)
-              .toArray
-            new ColumnarBatch(resultColumnVectors.map(_.asInstanceOf[ColumnVector]), 0)
-          }
-        }
-        return res
-      }
+      build_cb = realbuildIter.next()
       val beforeBuild = System.nanoTime()
       val build_rb = ConverterUtils.createArrowRecordBatch(build_cb)
       (0 until build_cb.numCols).toList.foreach(i =>
         build_cb.column(i).asInstanceOf[ArrowWritableColumnVector].retain())
       inputBatchHolder += build_cb
       prober.evaluate(build_rb)
-      _buildTime += (System.nanoTime() - beforeBuild)
+      prepareTime += (System.nanoTime() - beforeBuild)
       ConverterUtils.releaseArrowRecordBatch(build_rb)
     }
     if (build_cb != null) {
@@ -123,16 +129,13 @@ class ColumnarShuffledHashJoin(
       }
       return res
     }
-
-    // there will be different when condition is null or not null
     val beforeBuild = System.nanoTime()
     probe_iterator = prober.finishByIterator()
-    _buildTime += (System.nanoTime() - beforeBuild)
-    buildTime += _buildTime
+    prepareTime += (System.nanoTime() - beforeBuild)
 
     new Iterator[ColumnarBatch] {
       override def hasNext: Boolean = {
-        if (streamIter.hasNext) {
+        if (realstreamIter.hasNext) {
           true
         } else {
           inputBatchHolder.foreach(cb => cb.close())
@@ -141,7 +144,7 @@ class ColumnarShuffledHashJoin(
       }
 
       override def next(): ColumnarBatch = {
-        val cb = streamIter.next()
+        val cb = realstreamIter.next()
         last_cb = cb
         val beforeJoin = System.nanoTime()
         val stream_rb: ArrowRecordBatch = ConverterUtils.createArrowRecordBatch(cb)
@@ -172,13 +175,13 @@ class ColumnarShuffledHashJoin(
       probe_iterator.close()
       probe_iterator = null
     }
-    totalTime.merge(buildTime)
-    totalTime.merge(joinTime)
+    totaltime_sortmergejoin.merge(prepareTime)
+    totaltime_sortmergejoin.merge(joinTime)
   }
 }
 
-object ColumnarShuffledHashJoin extends Logging {
-
+object ColumnarSortMergeJoin extends Logging {
+  var columnarSortMergeJoin: ColumnarSortMergeJoin = _
   var build_input_arrow_schema: Schema = _
   var stream_input_arrow_schema: Schema = _
   var output_arrow_schema: Schema = _
@@ -190,28 +193,31 @@ object ColumnarShuffledHashJoin extends Logging {
       rightKeys: Seq[Expression],
       resultSchema: StructType,
       joinType: JoinType,
-      buildSide: BuildSide,
       conditionOption: Option[Expression],
       left: SparkPlan,
       right: SparkPlan,
+      _joinTime: SQLMetric,
+      _prepareTime: SQLMetric,
+      _totaltime_sortmergejoin: SQLMetric,
+      _numOutputRows: SQLMetric,
       _sparkConf: SparkConf): Unit = {
+    val joinTime = _joinTime
+    val prepareTime = _prepareTime
+    val totaltime_sortmergejoin = _totaltime_sortmergejoin
+    val numOutputRows = _numOutputRows
     val sparkConf = _sparkConf
     ColumnarPluginConfig.getConf(sparkConf)
     // TODO
     val l_input_schema: List[Attribute] = left.output.toList
     val r_input_schema: List[Attribute] = right.output.toList
     logInfo(
-      s"\nleft_schema is ${l_input_schema}, right_schema is ${r_input_schema}, \nleftKeys is ${leftKeys}, rightKeys is ${rightKeys}, \nresultSchema is ${resultSchema}, \njoinType is ${joinType}, buildSide is ${buildSide}, condition is ${conditionOption}")
+      s"\nleft_schema is ${l_input_schema}, right_schema is ${r_input_schema}, \nleftKeys is ${leftKeys}, rightKeys is ${rightKeys}, \nresultSchema is ${resultSchema}, \njoinType is ${joinType}, condition is ${conditionOption}")
 
     val l_input_field_list: List[Field] = l_input_schema.toList.map(attr => {
-      if (attr.dataType.isInstanceOf[DecimalType])
-        throw new UnsupportedOperationException(s"Decimal type is not supported in ColumnarShuffledHashJoin.")
       Field
         .nullable(s"${attr.name}#${attr.exprId.id}", CodeGeneration.getResultType(attr.dataType))
     })
     val r_input_field_list: List[Field] = r_input_schema.toList.map(attr => {
-      if (attr.dataType.isInstanceOf[DecimalType])
-        throw new UnsupportedOperationException(s"Decimal type is not supported in ColumnarShuffledHashJoin.")
       Field
         .nullable(s"${attr.name}#${attr.exprId.id}", CodeGeneration.getResultType(attr.dataType))
     })
@@ -224,27 +230,28 @@ object ColumnarShuffledHashJoin extends Logging {
 
     logInfo(s"leftKeyExpression is ${leftKeys}, rightKeyExpression is ${rightKeys}")
     val lkeyFieldList: List[Field] = leftKeys.toList.map(expr => {
-      val nativeNode = ConverterUtils.getColumnarFuncNode(expr)
-      if (s"${nativeNode.toProtobuf}".contains("fnNode")) {
-        throw new UnsupportedOperationException(
-          s"expression inside key is not currently supported.")
-      }
       val attr = ConverterUtils.getAttrFromExpr(expr)
       Field
         .nullable(s"${attr.name}#${attr.exprId.id}", CodeGeneration.getResultType(attr.dataType))
     })
 
     val rkeyFieldList: List[Field] = rightKeys.toList.map(expr => {
-      val nativeNode = ConverterUtils.getColumnarFuncNode(expr)
-      if (s"${nativeNode.toProtobuf}".contains("fnNode")) {
-        throw new UnsupportedOperationException(
-          s"expression inside key is not currently supported.")
-      }
       val attr = ConverterUtils.getAttrFromExpr(expr)
       Field
         .nullable(s"${attr.name}#${attr.exprId.id}", CodeGeneration.getResultType(attr.dataType))
     })
 
+    //TODO: fix join left/right
+    val buildSide :BuildSide = joinType match {
+      case LeftSemi =>
+        BuildRight
+      case LeftOuter =>
+        BuildRight
+      case LeftAnti =>
+        BuildRight
+      case _ =>
+        BuildLeft
+    }
     val (
       build_key_field_list,
       stream_key_field_list,
@@ -262,15 +269,17 @@ object ColumnarShuffledHashJoin extends Logging {
     var existsIndex: Int = -1
     val (probe_func_name, build_output_field_list, stream_output_field_list) = joinType match {
       case _: InnerLike =>
-        ("conditionedProbeArraysInner", build_input_field_list, stream_input_field_list)
+        ("conditionedJoinArraysInner", build_input_field_list, stream_input_field_list)
       case LeftSemi =>
-        ("conditionedProbeArraysSemi", List[Field](), stream_input_field_list)
+        //("conditionedJoinArraysSemi", List[Field](), stream_input_field_list)
+        ("conditionedJoinArraysSemi", build_input_field_list, stream_input_field_list)
       case LeftOuter =>
-        ("conditionedProbeArraysOuter", build_input_field_list, stream_input_field_list)
+        ("conditionedJoinArraysOuter", build_input_field_list, stream_input_field_list)
       case RightOuter =>
-        ("conditionedProbeArraysOuter", build_input_field_list, stream_input_field_list)
+        ("conditionedJoinArraysOuter", build_input_field_list, stream_input_field_list)
       case LeftAnti =>
-        ("conditionedProbeArraysAnti", List[Field](), stream_input_field_list)
+        //("conditionedJoinArraysAnti", List[Field](), stream_input_field_list)
+        ("conditionedJoinArraysAnti", build_input_field_list, stream_input_field_list)
       case j: ExistenceJoin =>
         val existsSchema = j.exists
         existsField = Field.nullable(
@@ -290,11 +299,6 @@ object ColumnarShuffledHashJoin extends Logging {
 
     stream_input_arrow_schema = new Schema(stream_input_field_list.asJava)
 
-    /////////////////////////////// Create Prober /////////////////////////////
-    // Prober is used to insert left table primary key into hashMap
-    // Then use iterator to probe right table primary key from hashmap
-    // to get corresponding indices of left table
-    //
     val condition = conditionOption match {
       case Some(c) =>
         c
@@ -320,6 +324,7 @@ object ColumnarShuffledHashJoin extends Logging {
             (build_input_field_list, stream_output_field_list ::: build_output_field_list)
         }
     }
+
     val conditionArrowSchema = new Schema(conditionInputFieldList.asJava)
     output_arrow_schema = new Schema(conditionOutputFieldList.asJava)
     var conditionInputList: java.util.List[Field] = Lists.newArrayList()
@@ -387,20 +392,27 @@ object ColumnarShuffledHashJoin extends Logging {
       rightKeys: Seq[Expression],
       resultSchema: StructType,
       joinType: JoinType,
-      buildSide: BuildSide,
       condition: Option[Expression],
       left: SparkPlan,
       right: SparkPlan,
+      joinTime: SQLMetric,
+      prepareTime: SQLMetric,
+      totaltime_sortmergejoin: SQLMetric,
+      numOutputRows: SQLMetric,
       sparkConf: SparkConf): String = synchronized {
+    
     init(
       leftKeys,
       rightKeys,
       resultSchema,
       joinType,
-      buildSide,
       condition,
       left,
       right,
+      joinTime,
+      prepareTime,
+      totaltime_sortmergejoin,
+      numOutputRows,
       sparkConf)
 
     prober = new ExpressionEvaluator()
@@ -411,32 +423,36 @@ object ColumnarShuffledHashJoin extends Logging {
       true)
     prober.close
     signature
-
   }
+
   def create(
       leftKeys: Seq[Expression],
       rightKeys: Seq[Expression],
       resultSchema: StructType,
       joinType: JoinType,
-      buildSide: BuildSide,
       condition: Option[Expression],
       left: SparkPlan,
       right: SparkPlan,
+      isSkewJoin: Boolean,
       listJars: Seq[String],
-      buildTime: SQLMetric,
       joinTime: SQLMetric,
-      totalTime: SQLMetric,
+      prepareTime: SQLMetric,
+      totaltime_sortmergejoin: SQLMetric,
       numOutputRows: SQLMetric,
-      sparkConf: SparkConf): ColumnarShuffledHashJoin = synchronized {
+      sparkConf: SparkConf): ColumnarSortMergeJoin = synchronized {
+
     init(
       leftKeys,
       rightKeys,
       resultSchema,
       joinType,
-      buildSide,
       condition,
       left,
       right,
+      joinTime,
+      prepareTime,
+      totaltime_sortmergejoin,
+      numOutputRows,
       sparkConf)
 
     prober = new ExpressionEvaluator(listJars.toList.asJava)
@@ -445,16 +461,30 @@ object ColumnarShuffledHashJoin extends Logging {
       Lists.newArrayList(condition_probe_expr),
       output_arrow_schema,
       true)
-    new ColumnarShuffledHashJoin(
+
+    columnarSortMergeJoin = new ColumnarSortMergeJoin(
       prober,
       stream_input_arrow_schema,
       output_arrow_schema,
+      leftKeys,
+      rightKeys,
       resultSchema,
-      buildTime,
+      joinType,
+      condition,
+      left,
+      right,
+      isSkewJoin,
       joinTime,
-      totalTime,
+      prepareTime,
+      totaltime_sortmergejoin,
       numOutputRows,
       sparkConf)
+    columnarSortMergeJoin
   }
 
+  def close(): Unit = {
+    if (columnarSortMergeJoin != null) {
+      columnarSortMergeJoin.close()
+    }
+  }
 }

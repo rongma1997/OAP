@@ -47,7 +47,7 @@ class ExprVisitorImpl {
   }
 
   virtual arrow::Status SetMember() {
-    return arrow::Status::NotImplemented("ExprVisitorImpl Init is abstract.");
+    return arrow::Status::NotImplemented("ExprVisitorImpl SetMember is abstract.");
   }
 
   virtual arrow::Status SetDependency(
@@ -211,18 +211,42 @@ class AggregateVisitorImpl : public ExprVisitorImpl {
 
     if (func_name_.compare("sum") == 0) {
       RETURN_NOT_OK(extra::SumArrayKernel::Make(&p_->ctx_, data_type, &kernel_));
+      kernel_list_.push_back(kernel_);
     } else if (func_name_.compare("count") == 0) {
       RETURN_NOT_OK(extra::CountArrayKernel::Make(&p_->ctx_, data_type, &kernel_));
+      kernel_list_.push_back(kernel_);
     } else if (func_name_.compare("sum_count") == 0) {
       p_->result_fields_.push_back(arrow::field("cnt", arrow::int64()));
       RETURN_NOT_OK(extra::SumCountArrayKernel::Make(&p_->ctx_, data_type, &kernel_));
+      kernel_list_.push_back(kernel_);
+    } else if (func_name_.compare("sum_count_merge") == 0) {
+      RETURN_NOT_OK(extra::SumArrayKernel::Make(&p_->ctx_, data_type, &kernel_));
+      kernel_list_.push_back(kernel_);
+      RETURN_NOT_OK(extra::SumArrayKernel::Make(&p_->ctx_, p_->result_fields_[1]->type(),
+                                                &kernel_));
+      kernel_list_.push_back(kernel_);
     } else if (func_name_.compare("avgByCount") == 0) {
       p_->result_fields_.erase(p_->result_fields_.end() - 1);
       RETURN_NOT_OK(extra::AvgByCountArrayKernel::Make(&p_->ctx_, data_type, &kernel_));
+      kernel_list_.push_back(kernel_);
     } else if (func_name_.compare("min") == 0) {
       RETURN_NOT_OK(extra::MinArrayKernel::Make(&p_->ctx_, data_type, &kernel_));
+      kernel_list_.push_back(kernel_);
     } else if (func_name_.compare("max") == 0) {
       RETURN_NOT_OK(extra::MaxArrayKernel::Make(&p_->ctx_, data_type, &kernel_));
+      kernel_list_.push_back(kernel_);
+    } else if (func_name_.compare("stddev_samp_partial") == 0) {
+      p_->result_fields_.push_back(arrow::field("avg", arrow::int64()));
+      p_->result_fields_.push_back(arrow::field("m2", arrow::int64()));
+      RETURN_NOT_OK(
+          extra::StddevSampPartialArrayKernel::Make(&p_->ctx_, data_type, &kernel_));
+      kernel_list_.push_back(kernel_);
+    } else if (func_name_.compare("stddev_samp_final") == 0) {
+      p_->result_fields_.erase(p_->result_fields_.end() - 1);
+      p_->result_fields_.erase(p_->result_fields_.end() - 1);
+      RETURN_NOT_OK(
+          extra::StddevSampFinalArrayKernel::Make(&p_->ctx_, data_type, &kernel_));
+      kernel_list_.push_back(kernel_);
     }
     initialized_ = true;
     return arrow::Status::OK();
@@ -241,7 +265,13 @@ class AggregateVisitorImpl : public ExprVisitorImpl {
           auto col = p_->in_record_batch_->column(col_id);
           in.push_back(col);
         }
-        RETURN_NOT_OK(kernel_->Evaluate(in));
+        for (int i = 0; i < kernel_list_.size(); i++) {
+          if (kernel_list_.size() > 1) {
+            RETURN_NOT_OK(kernel_list_[i]->Evaluate({in[i]}));
+          } else {
+            RETURN_NOT_OK(kernel_list_[i]->Evaluate(in));
+          }
+        }
         finish_return_type_ = ArrowComputeResultType::Batch;
       } break;
       default:
@@ -255,7 +285,9 @@ class AggregateVisitorImpl : public ExprVisitorImpl {
     RETURN_NOT_OK(ExprVisitorImpl::Finish());
     switch (finish_return_type_) {
       case ArrowComputeResultType::Batch: {
-        RETURN_NOT_OK(kernel_->Finish(&p_->result_batch_));
+        for (auto kernel : kernel_list_) {
+          RETURN_NOT_OK(kernel->Finish(&p_->result_batch_));
+        }
         p_->return_type_ = ArrowComputeResultType::Batch;
       } break;
       default: {
@@ -271,6 +303,7 @@ class AggregateVisitorImpl : public ExprVisitorImpl {
  private:
   std::vector<int> col_id_list_;
   std::string func_name_;
+  std::vector<std::shared_ptr<extra::KernalBase>> kernel_list_;
 };
 
 ////////////////////////// EncodeVisitorImpl ///////////////////////
@@ -302,7 +335,7 @@ class EncodeVisitorImpl : public ExprVisitorImpl {
       RETURN_NOT_OK(extra::HashArrayKernel::Make(&p_->ctx_, type_list, &concat_kernel_));
     }
 
-    auto result_field = field("res", arrow::uint32());
+    auto result_field = field("res", arrow::uint64());
     p_->result_fields_.push_back(result_field);
     initialized_ = true;
     return arrow::Status::OK();
@@ -502,6 +535,95 @@ class ConditionedProbeArraysVisitorImpl : public ExprVisitorImpl {
   std::vector<std::shared_ptr<arrow::Field>> right_field_list_;
   std::vector<std::shared_ptr<arrow::Field>> ret_fields_;
 };
+
+////////////////////////// ConditionedJoinArraysVisitorImpl ///////////////////////
+class ConditionedJoinArraysVisitorImpl : public ExprVisitorImpl {
+ public:
+  ConditionedJoinArraysVisitorImpl(
+      std::vector<std::shared_ptr<arrow::Field>> left_key_list,
+      std::vector<std::shared_ptr<arrow::Field>> right_key_list,
+      std::shared_ptr<gandiva::Node> func_node, int join_type,
+      std::vector<std::shared_ptr<arrow::Field>> left_field_list,
+      std::vector<std::shared_ptr<arrow::Field>> right_field_list,
+      std::vector<std::shared_ptr<arrow::Field>> ret_fields, ExprVisitor* p)
+      : left_key_list_(left_key_list),
+        right_key_list_(right_key_list),
+        join_type_(join_type),
+        func_node_(func_node),
+        left_field_list_(left_field_list),
+        right_field_list_(right_field_list),
+        ret_fields_(ret_fields),
+        ExprVisitorImpl(p) {}
+  static arrow::Status Make(std::vector<std::shared_ptr<arrow::Field>> left_key_list,
+                            std::vector<std::shared_ptr<arrow::Field>> right_key_list,
+                            std::shared_ptr<gandiva::Node> func_node, int join_type,
+                            std::vector<std::shared_ptr<arrow::Field>> left_field_list,
+                            std::vector<std::shared_ptr<arrow::Field>> right_field_list,
+                            std::vector<std::shared_ptr<arrow::Field>> ret_fields,
+                            ExprVisitor* p, std::shared_ptr<ExprVisitorImpl>* out) {
+    auto impl = std::make_shared<ConditionedJoinArraysVisitorImpl>(
+        left_key_list, right_key_list, func_node, join_type, left_field_list,
+        right_field_list, ret_fields, p);
+    *out = impl;
+    return arrow::Status::OK();
+  }
+
+  arrow::Status Init() override {
+    if (initialized_) {
+      return arrow::Status::OK();
+    }
+    RETURN_NOT_OK(extra::ConditionedJoinArraysKernel::Make(
+        &p_->ctx_, left_key_list_, right_key_list_, func_node_, join_type_,
+        left_field_list_, right_field_list_, arrow::schema(ret_fields_), &kernel_));
+    initialized_ = true;
+    return arrow::Status::OK();
+  }
+
+  arrow::Status Eval() override {
+    switch (p_->dependency_result_type_) {
+      case ArrowComputeResultType::None: {
+        ArrayList in;
+        for (int i = 0; i < p_->in_record_batch_->num_columns(); i++) {
+          in.push_back(p_->in_record_batch_->column(i));
+        }
+        TIME_MICRO_OR_RAISE(p_->elapse_time_, kernel_->Evaluate(in));
+        finish_return_type_ = ArrowComputeResultType::BatchIterator;
+      } break;
+      default:
+        return arrow::Status::NotImplemented(
+            "ConditionedJoinArraysVisitorImpl: Does not support this type of "
+            "input.");
+    }
+    return arrow::Status::OK();
+  }
+
+  arrow::Status MakeResultIterator(
+      std::shared_ptr<arrow::Schema> schema,
+      std::shared_ptr<ResultIterator<arrow::RecordBatch>>* out) override {
+    switch (finish_return_type_) {
+      case ArrowComputeResultType::BatchIterator: {
+        TIME_MICRO_OR_RAISE(p_->elapse_time_, kernel_->MakeResultIterator(schema, out));
+        p_->return_type_ = ArrowComputeResultType::Batch;
+      } break;
+      default:
+        return arrow::Status::Invalid(
+            "ConditionedJoinArraysVisitorImpl MakeResultIterator does not support "
+            "dependency type other than Batch.");
+    }
+    return arrow::Status::OK();
+  }
+
+ private:
+  int col_id_;
+  int join_type_;
+  std::shared_ptr<gandiva::Node> func_node_;
+  std::vector<std::shared_ptr<arrow::Field>> left_key_list_;
+  std::vector<std::shared_ptr<arrow::Field>> right_key_list_;
+  std::vector<std::shared_ptr<arrow::Field>> left_field_list_;
+  std::vector<std::shared_ptr<arrow::Field>> right_field_list_;
+  std::vector<std::shared_ptr<arrow::Field>> ret_fields_;
+};
+
 ////////////////////////// HashAggregateArraysVisitorImpl ///////////////////////
 class HashAggregateArraysVisitorImpl : public ExprVisitorImpl {
  public:

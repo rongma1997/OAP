@@ -201,13 +201,14 @@ set(SPARK_COLUMNAR_PLUGIN_SRCS
         codegen/arrow_compute/expr_visitor.cc
         codegen/arrow_compute/ext/hash_aggregate_kernel.cc
         codegen/arrow_compute/ext/probe_kernel.cc
+        codegen/arrow_compute/ext/merge_join_kernel.cc
         codegen/arrow_compute/ext/sort_kernel.cc
         codegen/arrow_compute/ext/kernels_ext.cc
         codegen/arrow_compute/ext/codegen_common.cc
         codegen/arrow_compute/ext/codegen_node_visitor.cc
         codegen/arrow_compute/ext/codegen_register.cc
-        shuffle/splitter.cc
         shuffle/partition_writer.cc
+        shuffle/splitter.cc
         precompile/hash_map.cc
         precompile/sparse_hash_map.cc
         precompile/builder.cc

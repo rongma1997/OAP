@@ -17,20 +17,28 @@
 
 package com.intel.oap.expression
 
-import java.io.ByteArrayInputStream
+import java.io.{ByteArrayInputStream, ByteArrayOutputStream, IOException}
+import java.nio.channels.Channels
 import java.nio.ByteBuffer
+import java.util.ArrayList
 import com.intel.oap.vectorized.ArrowWritableColumnVector
-import io.netty.buffer.ArrowBuf
-import org.apache.spark.rdd.RDD
+import io.netty.buffer.{ArrowBuf, ByteBufAllocator, ByteBufOutputStream}
+import org.apache.arrow.gandiva.exceptions.GandivaException
+import org.apache.arrow.gandiva.expression.ExpressionTree
+import org.apache.arrow.gandiva.ipc.GandivaTypes
+import org.apache.arrow.gandiva.ipc.GandivaTypes.ExpressionList
 import org.apache.arrow.vector._
-import org.apache.arrow.vector.ipc.{ArrowStreamReader, ArrowStreamWriter, WriteChannel}
+import org.apache.arrow.vector.ipc.{ArrowStreamReader, WriteChannel}
 import org.apache.arrow.vector.ipc.message.{
   ArrowFieldNode,
   ArrowRecordBatch,
-  MessageSerializer,
-  IpcOption
+  IpcOption,
+  MessageSerializer
 }
+import org.apache.arrow.vector.types.pojo.Field
 import org.apache.arrow.vector.types.pojo.Schema
+import org.apache.arrow.gandiva.expression._
+import org.apache.arrow.gandiva.evaluator._
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate._
@@ -38,12 +46,13 @@ import org.apache.spark.sql.catalyst.optimizer._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.util.ArrowUtils
-import org.apache.spark.sql.vectorized.{ColumnarBatch, ColumnVector}
+import org.apache.spark.sql.vectorized.{ColumnVector, ColumnarBatch}
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ListBuffer
 import io.netty.buffer.{ByteBuf, ByteBufAllocator, ByteBufOutputStream}
 import java.nio.channels.{Channels, WritableByteChannel}
+import com.google.common.collect.Lists
 
 object ConverterUtils extends Logging {
   def createArrowRecordBatch(columnarBatch: ColumnarBatch): ArrowRecordBatch = {
@@ -118,6 +127,7 @@ object ConverterUtils extends Logging {
     val buf = out.buffer
     val bytes = new Array[Byte](buf.readableBytes);
     buf.getBytes(buf.readerIndex, bytes);
+    out.close()
     bytes
   }
 
@@ -127,7 +137,7 @@ object ConverterUtils extends Logging {
       var incorrectInput = false
       var input = new ByteArrayInputStream(data(array_id))
       var reader = new ArrowStreamReader(input, ArrowWritableColumnVector.getNewAllocator)
-      var root = reader.getVectorSchemaRoot()
+      var root :VectorSchemaRoot = null
 
       override def hasNext: Boolean =
         (array_id < (data.size - 1) || input.available > 0) && (!incorrectInput)
@@ -140,6 +150,9 @@ object ConverterUtils extends Logging {
             root = reader.getVectorSchemaRoot()
           }
           reader.loadNextBatch();
+          if (root == null) {
+            root = reader.getVectorSchemaRoot()
+          }
           val length = root.getRowCount
           val vectors = root
             .getFieldVectors()
@@ -260,6 +273,21 @@ object ConverterUtils extends Logging {
     }
   }
 
+  def getColumnarFuncNode(expr: Expression): TreeNode = {
+    if (expr.isInstanceOf[AttributeReference] && expr
+          .asInstanceOf[AttributeReference]
+          .name == "none") {
+      throw new UnsupportedOperationException(
+        s"Unsupport to generate native expression from replaceable expression.")
+    }
+    var columnarExpr: Expression =
+      ColumnarExpressionConverter.replaceWithColumnarExpression(expr)
+    var inputList: java.util.List[Field] = Lists.newArrayList()
+    val (node, _resultType) =
+      columnarExpr.asInstanceOf[ColumnarExpression].doColumnarCodeGen(inputList)
+    node
+  }
+
   def ifEquals(left: Seq[AttributeReference], right: Seq[NamedExpression]): Boolean = {
     if (left.size != right.size) return false
     for (i <- 0 until left.size) {
@@ -290,4 +318,19 @@ object ConverterUtils extends Logging {
     s"ConverterUtils"
   }
 
+  @throws[IOException]
+  def getSchemaBytesBuf(schema: Schema): Array[Byte] = {
+    val out: ByteArrayOutputStream = new ByteArrayOutputStream
+    MessageSerializer.serialize(new WriteChannel(Channels.newChannel(out)), schema)
+    out.toByteArray
+  }
+
+  @throws[GandivaException]
+  def getExprListBytesBuf(exprs: List[ExpressionTree]): Array[Byte] = {
+    val builder: ExpressionList.Builder = GandivaTypes.ExpressionList.newBuilder
+    exprs.foreach { expr =>
+      builder.addExprs(expr.toProtobuf)
+    }
+    builder.build.toByteArray
+  }
 }
