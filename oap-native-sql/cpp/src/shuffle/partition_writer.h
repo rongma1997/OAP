@@ -68,21 +68,6 @@ arrow::enable_if_binary_like<T, arrow::Status> inline WriteBinary(
   using offset_type = typename T::offset_type;
 
   for (size_t i = 0; i < src.size(); ++i) {
-    offset_type length;
-    auto value = src[i]->GetValue(offset, &length);
-    RETURN_NOT_OK(builders[i]->Append(value, length));
-  }
-  return arrow::Status::OK();
-}
-
-template <typename T, typename ArrayType = typename arrow::TypeTraits<T>::ArrayType,
-          typename BuilderType = typename arrow::TypeTraits<T>::BuilderType>
-arrow::enable_if_binary_like<T, arrow::Status> inline WriteNullableBinary(
-    const std::vector<std::shared_ptr<ArrayType>>& src, int64_t offset,
-    const std::deque<std::unique_ptr<BuilderType>>& builders) {
-  using offset_type = typename T::offset_type;
-
-  for (size_t i = 0; i < src.size(); ++i) {
     // check not null
     if (src[i]->IsValid(offset)) {
       offset_type length;
@@ -128,8 +113,6 @@ class PartitionWriter {
       arrow::Compression::type compression_type);
 
   arrow::Status Stop();
-
-  arrow::Status WriteArrowRecordBatch();
 
   int64_t GetWriteTime() const { return write_time_; }
 
@@ -210,43 +193,10 @@ class PartitionWriter {
     ++write_offset_[Type::SHUFFLE_LARGE_BINARY];
     return true;
   }
-  /// Do memory copy for binary type
-  /// \param src source binary array
-  /// \param offset index of the element in source binary array
-  /// \return
-  arrow::Result<bool> inline WriteNullableBinary(
-      const std::vector<std::shared_ptr<arrow::BinaryArray>>& src, int64_t offset) {
-    ARROW_ASSIGN_OR_RAISE(auto write_ends, CheckTypeWriteEnds(Type::SHUFFLE_BINARY))
-    if (write_ends) {
-      return false;
-    }
-
-    RETURN_NOT_OK(
-        detail::WriteNullableBinary<arrow::BinaryType>(src, offset, binary_builders_));
-
-    ++write_offset_[Type::SHUFFLE_BINARY];
-    return true;
-  }
-
-  /// Do memory copy for large binary type
-  /// \param src source binary array
-  /// \param offset index of the element in source binary array
-  /// \return
-  arrow::Result<bool> inline WriteNullableLargeBinary(
-      const std::vector<std::shared_ptr<arrow::LargeBinaryArray>>& src, int64_t offset) {
-    ARROW_ASSIGN_OR_RAISE(auto write_ends, CheckTypeWriteEnds(Type::SHUFFLE_LARGE_BINARY))
-    if (write_ends) {
-      return false;
-    }
-
-    RETURN_NOT_OK(detail::WriteNullableBinary<arrow::LargeBinaryType>(
-        src, offset, large_binary_builders_));
-
-    ++write_offset_[Type::SHUFFLE_LARGE_BINARY];
-    return true;
-  }
 
  private:
+  arrow::Status WriteArrowRecordBatch();
+
   const int32_t pid_;
   const int64_t capacity_;
   const Type::typeId last_type_;
