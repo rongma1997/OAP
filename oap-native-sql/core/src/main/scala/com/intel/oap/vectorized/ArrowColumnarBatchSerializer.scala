@@ -26,7 +26,6 @@ import org.apache.arrow.vector.ipc.ArrowStreamReader
 import org.apache.arrow.vector.{
   BaseFixedWidthVector,
   BaseVariableWidthVector,
-  NullVector,
   VectorLoader,
   VectorSchemaRoot
 }
@@ -47,16 +46,18 @@ import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
 import scala.reflect.ClassTag
 
-class ArrowColumnarBatchSerializer(readBatchNumRows: SQLMetric)
+class ArrowColumnarBatchSerializer(readBatchNumRows: SQLMetric, numOutputRows: SQLMetric)
     extends Serializer
     with Serializable {
 
   /** Creates a new [[SerializerInstance]]. */
   override def newInstance(): SerializerInstance =
-    new ArrowColumnarBatchSerializerInstance(readBatchNumRows)
+    new ArrowColumnarBatchSerializerInstance(readBatchNumRows, numOutputRows)
 }
 
-private class ArrowColumnarBatchSerializerInstance(readBatchNumRows: SQLMetric)
+private class ArrowColumnarBatchSerializerInstance(
+    readBatchNumRows: SQLMetric,
+    numOutputRows: SQLMetric)
     extends SerializerInstance
     with Logging {
 
@@ -81,6 +82,8 @@ private class ArrowColumnarBatchSerializerInstance(readBatchNumRows: SQLMetric)
 
       private var numBatchesTotal: Long = _
       private var numRowsTotal: Long = _
+
+      private var isClosed: Boolean = false
 
       override def asIterator: Iterator[Any] = {
         // This method is never called by shuffle code.
@@ -145,7 +148,11 @@ private class ArrowColumnarBatchSerializerInstance(readBatchNumRows: SQLMetric)
             throw new EOFException
           }
         } else {
-          reader = new ArrowCompressedStreamReader(in, allocator)
+          if (compressionEnabled) {
+            reader = new ArrowCompressedStreamReader(in, allocator)
+          } else {
+            reader = new ArrowStreamReader(in, allocator)
+          }
           try {
             root = reader.getVectorSchemaRoot
           } catch {
@@ -163,12 +170,16 @@ private class ArrowColumnarBatchSerializerInstance(readBatchNumRows: SQLMetric)
       }
 
       override def close(): Unit = {
-        if (numBatchesTotal > 0) {
-          readBatchNumRows.set(numRowsTotal.toDouble / numBatchesTotal)
+        if (!isClosed) {
+          if (numBatchesTotal > 0) {
+            readBatchNumRows.set(numRowsTotal.toDouble / numBatchesTotal)
+          }
+          numOutputRows += numRowsTotal
+          if (cb != null) cb.close()
+          if (reader != null) reader.close(true)
+          if (jniWrapper != null) jniWrapper.close(schemaHolderId)
+          isClosed = true
         }
-        if (cb != null) cb.close()
-        if (reader != null) reader.close(true)
-        if (jniWrapper != null) jniWrapper.close(schemaHolderId)
       }
 
       private def decompressVectors(): Unit = {
@@ -191,6 +202,7 @@ private class ArrowColumnarBatchSerializerInstance(readBatchNumRows: SQLMetric)
               java.lang.Long.bitCount(validityBuf.getLong(0)) == 0) {
             bufBS.add(bufIdx)
           }
+          // don't call vector.getBuffers to avoid extra check
           val buffers = vector match {
             case fixed: BaseFixedWidthVector =>
               fixed.getValidityBuffer :: fixed.getDataBuffer :: Nil

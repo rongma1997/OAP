@@ -117,6 +117,10 @@ TEST_F(SplitterTest, TestRoundRobinSplitter) {
     std::shared_ptr<arrow::RecordBatch> rb;
     ASSERT_NOT_OK(file_reader->ReadNext(&rb));
     ASSERT_EQ(rb->num_rows(), buffer_size);
+    for (auto i = 0; i < rb->num_columns(); ++i) {
+      rb->column(i)->length();
+      ASSERT_EQ(rb->column(i)->length(), rb->num_rows());
+    }
 
     if (!file_in->closed()) {
       ASSERT_NOT_OK(file_in->Close());
@@ -168,6 +172,10 @@ TEST_F(SplitterTest, TestHashSplitter) {
     std::shared_ptr<arrow::RecordBatch> rb;
     ASSERT_NOT_OK(file_reader->ReadNext(&rb));
     ASSERT_EQ(rb->num_rows(), buffer_size);
+    for (auto i = 0; i < rb->num_columns(); ++i) {
+      rb->column(i)->length();
+      ASSERT_EQ(rb->column(i)->length(), rb->num_rows());
+    }
 
     if (!file_in->closed()) {
       ASSERT_NOT_OK(file_in->Close());
@@ -220,6 +228,10 @@ TEST_F(SplitterTest, TestFallbackRangeSplitter) {
     std::shared_ptr<arrow::RecordBatch> rb;
     ASSERT_NOT_OK(file_reader->ReadNext(&rb));
     ASSERT_EQ(rb->num_rows(), buffer_size);
+    for (auto i = 0; i < rb->num_columns(); ++i) {
+      rb->column(i)->length();
+      ASSERT_EQ(rb->column(i)->length(), rb->num_rows());
+    }
 
     if (!file_in->closed()) {
       ASSERT_NOT_OK(file_in->Close());
