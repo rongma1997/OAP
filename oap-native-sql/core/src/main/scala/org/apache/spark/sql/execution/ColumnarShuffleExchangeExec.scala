@@ -71,14 +71,18 @@ class ColumnarShuffleExchangeExec(
     "computePidTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "compute pid time"),
     "totalTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "totaltime_shufflewrite"),
     "avgReadBatchNumRows" -> SQLMetrics
-      .createAverageMetric(sparkContext, "avg read batch num rows")) ++ readMetrics ++ writeMetrics
+      .createAverageMetric(sparkContext, "avg read batch num rows"),
+    "numInputRows" -> SQLMetrics.createMetric(sparkContext, "number of input rows"),
+    "numOutputRows" -> SQLMetrics
+      .createMetric(sparkContext, "number of output rows")) ++ readMetrics ++ writeMetrics
 
   override def nodeName: String = "ColumnarExchange"
 
   override def supportsColumnar: Boolean = true
 
   private val serializer: Serializer = new ArrowColumnarBatchSerializer(
-    longMetric("avgReadBatchNumRows"))
+    longMetric("avgReadBatchNumRows"),
+    longMetric("numOutputRows"))
 
   @transient lazy val inputColumnarRDD: RDD[ColumnarBatch] = child.executeColumnar()
 

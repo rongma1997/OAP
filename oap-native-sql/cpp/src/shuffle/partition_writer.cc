@@ -118,14 +118,30 @@ arrow::Status PartitionWriter::WriteArrowRecordBatch() {
       RETURN_NOT_OK(builder->Finish(&arrays[i]));
       large_binary_builders_.push_back(std::move(builder));
     } else {
-      auto buf_msg_ptr = std::move(buffers_[type_id].front());
+      auto buf_info_ptr = std::move(buffers_[type_id].front());
       buffers_[type_id].pop_front();
+
+      auto num_rows = write_offset_[last_type_];
+      if (type_id != Type::SHUFFLE_NULL && num_rows < capacity_) {
+        auto validity_len = (num_rows / 8) + (num_rows % 8 != 0);
+        auto value_len = validity_len;
+        if (type_id != Type::SHUFFLE_BIT) {
+          value_len = num_rows * (1 << type_id);
+        }
+        auto resizable_validity_buf =
+            dynamic_cast<arrow::ResizableBuffer*>(buf_info_ptr->validity_buffer.get());
+        auto resizable_value_buf =
+            dynamic_cast<arrow::ResizableBuffer*>(buf_info_ptr->value_buffer.get());
+        RETURN_NOT_OK(resizable_validity_buf->Resize(validity_len));
+        RETURN_NOT_OK(resizable_value_buf->Resize(value_len));
+      }
+
       auto arr = arrow::ArrayData::Make(
-          schema_->field(i)->type(), write_offset_[last_type_],
-          std::vector<std::shared_ptr<arrow::Buffer>>{buf_msg_ptr->validity_buffer,
-                                                      buf_msg_ptr->value_buffer});
+          schema_->field(i)->type(), num_rows,
+          std::vector<std::shared_ptr<arrow::Buffer>>{buf_info_ptr->validity_buffer,
+                                                      buf_info_ptr->value_buffer});
       arrays[i] = arrow::MakeArray(arr);
-      buffers_[type_id].push_back(std::move(buf_msg_ptr));
+      buffers_[type_id].push_back(std::move(buf_info_ptr));
     }
   }
   auto record_batch =

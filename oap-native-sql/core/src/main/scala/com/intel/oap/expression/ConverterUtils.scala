@@ -19,17 +19,13 @@ package com.intel.oap.expression
 
 import java.io.ByteArrayInputStream
 import java.nio.ByteBuffer
+
 import com.intel.oap.vectorized.ArrowWritableColumnVector
 import io.netty.buffer.ArrowBuf
 import org.apache.spark.rdd.RDD
 import org.apache.arrow.vector._
 import org.apache.arrow.vector.ipc.{ArrowStreamReader, ArrowStreamWriter, WriteChannel}
-import org.apache.arrow.vector.ipc.message.{
-  ArrowFieldNode,
-  ArrowRecordBatch,
-  MessageSerializer,
-  IpcOption
-}
+import org.apache.arrow.vector.ipc.message.{ArrowFieldNode, ArrowRecordBatch, IpcOption, MessageSerializer}
 import org.apache.arrow.vector.types.pojo.Field
 import org.apache.arrow.vector.types.pojo.Schema
 import org.apache.arrow.gandiva.expression._
@@ -41,12 +37,14 @@ import org.apache.spark.sql.catalyst.optimizer._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.util.ArrowUtils
-import org.apache.spark.sql.vectorized.{ColumnarBatch, ColumnVector}
+import org.apache.spark.sql.vectorized.{ColumnVector, ColumnarBatch}
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ListBuffer
 import io.netty.buffer.{ByteBuf, ByteBufAllocator, ByteBufOutputStream}
 import java.nio.channels.{Channels, WritableByteChannel}
+
+import com.google.common.collect.Lists
 
 object ConverterUtils extends Logging {
   def createArrowRecordBatch(columnarBatch: ColumnarBatch): ArrowRecordBatch = {
