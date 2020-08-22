@@ -44,6 +44,7 @@ case class CoalesceBatchesExec(child: SparkPlan) extends UnaryExecNode {
     "numInputBatches" -> SQLMetrics.createMetric(sparkContext, "input_batches"),
     "numOutputBatches" -> SQLMetrics.createMetric(sparkContext, "output_batches"),
     "concatTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "totaltime_coalescebatch"),
+    "collectTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "totaltime_collectbatch"),
     "avgCoalescedNumRows" -> SQLMetrics
       .createAverageMetric(sparkContext, "avg coalesced batch num rows"))
 
@@ -55,6 +56,7 @@ case class CoalesceBatchesExec(child: SparkPlan) extends UnaryExecNode {
     val numInputBatches = longMetric("numInputBatches")
     val numOutputBatches = longMetric("numOutputBatches")
     val concatTime = longMetric("concatTime")
+    val collectTime = longMetric("collectTime")
     val avgCoalescedNumRows = longMetric("avgCoalescedNumRows")
 
     child.executeColumnar().mapPartitions { iter =>
@@ -87,12 +89,18 @@ case class CoalesceBatchesExec(child: SparkPlan) extends UnaryExecNode {
             var rowCount = 0
             val batchesToAppend = ListBuffer[ColumnarBatch]()
 
+            val beforeCollectTarget = System.nanoTime()
             target = iter.next()
+            collectTime += System.nanoTime() - beforeCollectTarget
+
             target.retain()
             rowCount += target.numRows
 
             while (iter.hasNext && rowCount < recordsPerBatch) {
+              val beforeCollectDelta = System.nanoTime()
               val delta = iter.next()
+              collectTime += System.nanoTime() - beforeCollectDelta
+
               delta.retain()
               rowCount += delta.numRows
               batchesToAppend += delta
