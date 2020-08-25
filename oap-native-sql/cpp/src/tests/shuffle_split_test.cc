@@ -36,6 +36,7 @@ class SplitterTest : public ::testing::Test {
     auto f_int8_a = field("f_int8_a", arrow::int8());
     auto f_int8_b = field("f_int8_b", arrow::int8());
     auto f_uint64 = field("f_uint64", arrow::uint64());
+    auto f_double = field("f_double", arrow::float64());
     auto f_bool = field("f_bool", arrow::boolean());
     auto f_string = field("f_string", arrow::utf8());
     auto f_decimal = field("f_decimal128", arrow::decimal(10, 2));
@@ -48,8 +49,8 @@ class SplitterTest : public ::testing::Test {
 
     setenv("NATIVESQL_SPARK_LOCAL_DIRS", config_dirs.c_str(), 1);
 
-    schema_ =
-        arrow::schema({f_na, f_int8_a, f_int8_b, f_uint64, f_bool, f_string, f_decimal});
+    schema_ = arrow::schema(
+        {f_na, f_int8_a, f_int8_b, f_uint64, f_double, f_bool, f_string, f_decimal});
   }
 
   void TearDown() override {
@@ -79,9 +80,10 @@ const std::vector<std::string> SplitterTest::input_data = {
     "[1, 2, 3, null]",
     "[1, -1, null, null]",
     "[null, null, null, null]",
+    R"([-0.1234567, null, 0.1234567, null])",
     "[null, 1, 0, null]",
     R"(["alice", "bob", null, null])",
-    R"(["1.01", "2.01", "3.01", null])"};
+    R"(["-1.01", "2.01", "-3.01", null])"};
 
 TEST_F(SplitterTest, TestRoundRobinSplitter) {
   int32_t num_partitions = 3;
