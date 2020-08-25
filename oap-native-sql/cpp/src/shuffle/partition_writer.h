@@ -37,9 +37,10 @@ template <typename T>
 arrow::Status inline Write(const SrcBuffers& src, int64_t src_offset,
                            const BufferInfos& dst, int64_t dst_offset) {
   for (size_t i = 0; i < src.size(); ++i) {
-    dst[i]->validity_addr[dst_offset / 8] |=
-        (((src[i].validity_addr)[src_offset / 8] >> (src_offset % 8)) & 1)
-        << (dst_offset % 8);
+    if (dst[i]->validity_addr[dst_offset / 8] >> dst_offset % 8 & 1 ^
+        (src[i].validity_addr)[src_offset / 8] >> src_offset % 8 & 1) {
+      dst[i]->validity_addr[dst_offset / 8] ^= 1 << dst_offset % 8;
+    }
     reinterpret_cast<T*>(dst[i]->value_addr)[dst_offset] =
         reinterpret_cast<T*>(src[i].value_addr)[src_offset];
   }
@@ -50,12 +51,29 @@ template <>
 arrow::Status inline Write<bool>(const SrcBuffers& src, int64_t src_offset,
                                  const BufferInfos& dst, int64_t dst_offset) {
   for (size_t i = 0; i < src.size(); ++i) {
-    dst[i]->validity_addr[dst_offset / 8] |=
-        (((src[i].validity_addr)[src_offset / 8] >> (src_offset % 8)) & 1)
-        << (dst_offset % 8);
-    dst[i]->value_addr[dst_offset / 8] |=
-        (((src[i].value_addr)[src_offset / 8] >> (src_offset % 8)) & 1)
-        << (dst_offset % 8);
+    if (dst[i]->validity_addr[dst_offset / 8] >> dst_offset % 8 & 1 ^
+        (src[i].validity_addr)[src_offset / 8] >> src_offset % 8 & 1) {
+      dst[i]->validity_addr[dst_offset / 8] ^= 1 << dst_offset % 8;
+    }
+    if (dst[i]->value_addr[dst_offset / 8] >> dst_offset % 8 & 1 ^
+        (src[i].value_addr)[src_offset / 8] >> src_offset % 8 & 1) {
+      dst[i]->value_addr[dst_offset / 8] ^= 1 << dst_offset % 8;
+    }
+  }
+  return arrow::Status::OK();
+}
+
+arrow::Status inline WriteDecimal128(const SrcBuffers& src, int64_t src_offset,
+                                     const BufferInfos& dst, int64_t dst_offset) {
+  for (size_t i = 0; i < src.size(); ++i) {
+    if (dst[i]->validity_addr[dst_offset / 8] >> dst_offset % 8 & 1 ^
+        (src[i].validity_addr)[src_offset / 8] >> src_offset % 8 & 1) {
+      dst[i]->validity_addr[dst_offset / 8] ^= 1 << dst_offset % 8;
+    }
+    reinterpret_cast<uint64_t*>(dst[i]->value_addr)[dst_offset << 1] =
+        reinterpret_cast<uint64_t*>(src[i].value_addr)[src_offset << 1];
+    reinterpret_cast<int64_t*>(dst[i]->value_addr)[dst_offset << 1 | 1] =
+        reinterpret_cast<int64_t*>(src[i].value_addr)[src_offset << 1 | 1];
   }
   return arrow::Status::OK();
 }
@@ -76,20 +94,6 @@ arrow::enable_if_binary_like<T, arrow::Status> inline WriteBinary(
     } else {
       RETURN_NOT_OK(builders[i]->AppendNull());
     }
-  }
-  return arrow::Status::OK();
-}
-
-arrow::Status inline WriteDecimal128(const SrcBuffers& src, int64_t src_offset,
-                                     const BufferInfos& dst, int64_t dst_offset) {
-  for (size_t i = 0; i < src.size(); ++i) {
-    dst[i]->validity_addr[dst_offset / 8] |=
-        (((src[i].validity_addr)[src_offset / 8] >> (src_offset % 8)) & 1)
-        << (dst_offset % 8);
-    reinterpret_cast<uint64_t*>(dst[i]->value_addr)[dst_offset << 1] =
-        reinterpret_cast<uint64_t*>(src[i].value_addr)[src_offset << 1];
-    reinterpret_cast<uint64_t*>(dst[i]->value_addr)[dst_offset << 1 | 1] =
-        reinterpret_cast<uint64_t*>(src[i].value_addr)[src_offset << 1 | 1];
   }
   return arrow::Status::OK();
 }
@@ -220,8 +224,8 @@ class PartitionWriter {
       return false;
     }
 
-    RETURN_NOT_OK(
-        detail::WriteDecimal128(src, offset, buffers_[Type::SHUFFLE_DECIMAL128], write_offset_[Type::SHUFFLE_DECIMAL128]));
+    RETURN_NOT_OK(detail::WriteDecimal128(src, offset, buffers_[Type::SHUFFLE_DECIMAL128],
+                                          write_offset_[Type::SHUFFLE_DECIMAL128]));
 
     ++write_offset_[Type::SHUFFLE_DECIMAL128];
     return true;
