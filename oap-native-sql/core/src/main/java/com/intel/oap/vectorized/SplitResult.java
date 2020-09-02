@@ -22,17 +22,17 @@ public class SplitResult {
   private final long totalComputePidTime;
   private final long totalWriteTime;
   private final long totalBytesWritten;
-  private final PartitionFileInfo[] partitionFileInfo;
+  private final long[] partitionLengths;
 
   public SplitResult(
       long totalComputePidTime,
       long totalWriteTime,
       long totalBytesWritten,
-      PartitionFileInfo[] partitionFileInfo) {
+      long[] partitionLengths) {
     this.totalComputePidTime = totalComputePidTime;
     this.totalWriteTime = totalWriteTime;
     this.totalBytesWritten = totalBytesWritten;
-    this.partitionFileInfo = partitionFileInfo;
+    this.partitionLengths = partitionLengths;
   }
 
   public long getTotalComputePidTime() {
@@ -47,7 +47,7 @@ public class SplitResult {
     return totalBytesWritten;
   }
 
-  public PartitionFileInfo[] getPartitionFileInfo() {
-    return partitionFileInfo;
+  public long[] getPartitionLengths() {
+    return partitionLengths;
   }
 }
