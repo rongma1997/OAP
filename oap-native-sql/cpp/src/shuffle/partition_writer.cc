@@ -85,27 +85,29 @@ arrow::Result<std::shared_ptr<PartitionWriter>> PartitionWriter::Create(
 }
 
 arrow::Status PartitionWriter::Stop() {
+  auto start_write = std::chrono::steady_clock::now();
+  int64_t spill_time = 0;
   ARROW_ASSIGN_OR_RAISE(auto before_write, data_file_os_->Tell())
   // copy spilled data blocks
   if (spilled_file_os_ != nullptr) {
-    TIME_NANO_OR_RAISE(spill_time_, Spill());
+    auto start_spill = std::chrono::steady_clock::now();
+    RETURN_NOT_OK(Spill());
     // write EOS
     RETURN_NOT_OK(spilled_file_writer_->Close());
     RETURN_NOT_OK(spilled_file_os_->Close());
+    auto end_spill = std::chrono::steady_clock::now();
+    spill_time +=
+        std::chrono::duration_cast<std::chrono::nanoseconds>(end_spill - start_spill)
+            .count();
 
-    auto start_write = std::chrono::steady_clock::now();
     ARROW_ASSIGN_OR_RAISE(auto spilled_file_is,
                           arrow::io::ReadableFile::Open(spilled_file_));
     ARROW_ASSIGN_OR_RAISE(auto length, spilled_file_is->GetSize());
     ARROW_ASSIGN_OR_RAISE(auto buffer, spilled_file_is->Read(length));
     RETURN_NOT_OK(spilled_file_is->Close());
     RETURN_NOT_OK(data_file_os_->Write(buffer));
-    auto end_write = std::chrono::steady_clock::now();
-    write_time_ +=
-        std::chrono::duration_cast<std::chrono::nanoseconds>(end_write - start_write)
-            .count();
+
   } else {
-    auto start_write = std::chrono::steady_clock::now();
     ARROW_ASSIGN_OR_RAISE(
         auto data_file_writer,
         arrow::ipc::NewStreamWriter(data_file_os_.get(), schema_,
@@ -116,10 +118,6 @@ arrow::Status PartitionWriter::Stop() {
     }
     // write EOS
     RETURN_NOT_OK(data_file_writer->Close());
-    auto end_write = std::chrono::steady_clock::now();
-    write_time_ +=
-        std::chrono::duration_cast<std::chrono::nanoseconds>(end_write - start_write)
-            .count();
   }
 
   ARROW_ASSIGN_OR_RAISE(auto after_write, data_file_os_->Tell());
@@ -127,6 +125,13 @@ arrow::Status PartitionWriter::Stop() {
 
   auto fs = std::make_shared<arrow::fs::LocalFileSystem>();
   RETURN_NOT_OK(fs->DeleteFile(spilled_file_));
+
+  auto end_write = std::chrono::steady_clock::now();
+  auto write_time =
+      std::chrono::duration_cast<std::chrono::nanoseconds>(end_write - start_write)
+          .count();
+  write_time_ += (write_time - spill_time);
+  spill_time_ += spill_time;
 
   return arrow::Status::OK();
 }
