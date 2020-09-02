@@ -51,9 +51,6 @@ static jmethodID arrow_field_node_builder_constructor;
 static jclass arrowbuf_builder_class;
 static jmethodID arrowbuf_builder_constructor;
 
-static jclass partition_file_info_class;
-static jmethodID partition_file_info_constructor;
-
 static jclass split_result_class;
 static jmethodID split_result_constructor;
 
@@ -199,7 +196,7 @@ jint JNI_OnLoad(JavaVM* vm, void* reserved) {
 
   split_result_class =
       CreateGlobalClassReference(env, "Lcom/intel/oap/vectorized/SplitResult;");
-  split_result_constructor = GetMethodID(env, split_result_class, "<init>", "(JJJ[J)V");
+  split_result_constructor = GetMethodID(env, split_result_class, "<init>", "(JJJJ[J)V");
 
   return JNI_VERSION;
 }
@@ -1259,7 +1256,7 @@ JNIEXPORT jobject JNICALL Java_com_intel_oap_vectorized_ShuffleSplitterJniWrappe
   env->SetLongArrayRegion(partition_length_arr, 0, partition_length.size(), src);
   jobject split_result = env->NewObject(
       split_result_class, split_result_constructor, splitter->TotalComputePidTime(),
-      splitter->TotalWriteTime(), splitter->TotalBytesWritten(), partition_length_arr);
+      splitter->TotalWriteTime(), splitter->TotalSpillTime(), splitter->TotalBytesWritten(), partition_length_arr);
 
   return split_result;
 }

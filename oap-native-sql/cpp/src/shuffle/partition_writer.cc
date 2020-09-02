@@ -87,7 +87,7 @@ arrow::Result<std::shared_ptr<PartitionWriter>> PartitionWriter::Create(
 }
 
 arrow::Status PartitionWriter::Stop() {
-  auto start = std::chrono::steady_clock::now();
+  auto start_spill = std::chrono::steady_clock::now();
   ARROW_ASSIGN_OR_RAISE(auto before_write, data_file_os_->Tell())
   ARROW_ASSIGN_OR_RAISE(
       auto data_file_writer,
@@ -100,6 +100,12 @@ arrow::Status PartitionWriter::Stop() {
       RETURN_NOT_OK(data_file_writer->WriteRecordBatch(*batch));
     }
   }
+  auto end_spill = std::chrono::steady_clock::now();
+  spill_time_ +=
+      std::chrono::duration_cast<std::chrono::nanoseconds>(end_spill - start_spill)
+          .count();
+
+  auto start_write = std::chrono::steady_clock::now();
   // write the last record batch
   ARROW_ASSIGN_OR_RAISE(auto batch, MakeRecordBatchAndReset());
   if (batch != nullptr) {
@@ -110,9 +116,10 @@ arrow::Status PartitionWriter::Stop() {
   ARROW_ASSIGN_OR_RAISE(auto after_write, data_file_os_->Tell());
   partition_length_ = after_write - before_write;
   // count write time
-  auto end = std::chrono::steady_clock::now();
+  auto end_write = std::chrono::steady_clock::now();
   write_time_ +=
-      std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
+      std::chrono::duration_cast<std::chrono::nanoseconds>(end_write - start_write)
+          .count();
   return arrow::Status::OK();
 }
 

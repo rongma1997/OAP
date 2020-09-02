@@ -140,6 +140,8 @@ class PartitionWriter {
 
   int64_t GetWriteTime() const { return write_time_; }
 
+  int64_t GetSpillTime() const { return spill_time_; }
+
   int64_t GetPartitionLength() const { return partition_length_; }
 
   arrow::Result<bool> inline CheckTypeWriteEnds(const Type::typeId& type_id) {
@@ -147,7 +149,7 @@ class PartitionWriter {
       if (type_id == last_type_) {
         // Write to spilled file, close the file but don't call RecordBatchWriter.Close()
         // since it may not be the last batch to write
-        TIME_NANO_OR_RAISE(write_time_, Spill());
+        TIME_NANO_OR_RAISE(spill_time_, Spill());
       }
       return true;
     }
@@ -263,6 +265,7 @@ class PartitionWriter {
   std::vector<int32_t> spilled_index_;
 
   int64_t write_time_ = 0;
+  int64_t spill_time_ = 0;
   int64_t partition_length_ = 0;
 };
 

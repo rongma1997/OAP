@@ -69,6 +69,8 @@ class Splitter {
 
   int64_t TotalWriteTime() const { return total_write_time_; }
 
+  int64_t TotalSpillTime() const { return total_spill_time_; }
+
   int64_t TotalComputePidTime() const { return total_compute_pid_time_; }
 
   const std::vector<int64_t>& PartitionLengths() const { return partition_lengths_; }
@@ -104,6 +106,7 @@ class Splitter {
 
   int64_t total_bytes_written_ = 0;
   int64_t total_write_time_ = 0;
+  int64_t total_spill_time_ = 0;
   int64_t total_compute_pid_time_ = 0;
   std::vector<int64_t> partition_lengths_;
 
