@@ -57,6 +57,7 @@ class ColumnarShuffleWriter[K, V](
 
   private var mapStatus: MapStatus = _
 
+  private val localDirs = blockManager.diskBlockManager.localDirs.mkString(",")
   private val nativeBufferSize =
     conf.getInt("spark.sql.execution.arrow.maxRecordsPerBatch", 4096)
   private val compressionCodec = if (conf.getBoolean("spark.shuffle.compress", true)) {
@@ -88,7 +89,9 @@ class ColumnarShuffleWriter[K, V](
         dep.nativePartitioning,
         nativeBufferSize,
         compressionCodec,
-        dataTmp.getAbsolutePath)
+        dataTmp.getAbsolutePath,
+        blockManager.subDirsPerLocalDir,
+        localDirs)
     }
 
     while (records.hasNext) {

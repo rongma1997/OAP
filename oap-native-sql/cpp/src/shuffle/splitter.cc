@@ -74,25 +74,15 @@ arrow::Status Splitter::Init() {
   partition_lengths_.reserve(num_partitions_);
   partition_writer_.resize(num_partitions_);
 
+  ARROW_ASSIGN_OR_RAISE(configured_dirs_, GetConfiguredLocalDirs());
+  sub_dir_selection_.assign(configured_dirs_.size(), 0);
+
   // Both data_file and shuffle_index_file should be set through jni.
   // For test purpose, Create a temporary subdirectory in the system temporary dir with
   // prefix "columnar-shuffle"
   if (options_.data_file.length() == 0) {
-    ARROW_ASSIGN_OR_RAISE(auto dir, CreateTempShuffleDir());
-    ARROW_ASSIGN_OR_RAISE(options_.data_file, CreateTempShuffleFile(dir));
+    ARROW_ASSIGN_OR_RAISE(options_.data_file, CreateTempShuffleFile(configured_dirs_[0]));
   }
-
-  ARROW_ASSIGN_OR_RAISE(
-      spilled_file_,
-      CreateTempShuffleFile(
-          arrow::fs::internal::GetAbstractPathParent(options_.data_file).first));
-  ARROW_ASSIGN_OR_RAISE(spilled_file_os_,
-                        arrow::io::FileOutputStream::Open(spilled_file_, false));
-  ARROW_ASSIGN_OR_RAISE(spilled_file_writer_,
-                        arrow::ipc::NewFileWriter(
-                            spilled_file_os_.get(), schema_,
-                            SplitterIpcWriteOptions(arrow::Compression::UNCOMPRESSED)));
-
   return arrow::Status::OK();
 }
 
@@ -195,19 +185,6 @@ arrow::Status Splitter::Split(const arrow::RecordBatch& rb) {
 }
 
 arrow::Status Splitter::Stop() {
-  // write EOF to spilled file
-  RETURN_NOT_OK(spilled_file_writer_->Close());
-  // close spilled file output stream
-  RETURN_NOT_OK(spilled_file_os_->Close());
-
-  auto reader_options = arrow::ipc::IpcReadOptions::Defaults();
-  reader_options.use_threads = false;
-  // open spilled file input stream
-  ARROW_ASSIGN_OR_RAISE(auto spilled_file_is_,
-                        arrow::io::ReadableFile::Open(spilled_file_));
-  // create record batch file reader, no need to close
-  ARROW_ASSIGN_OR_RAISE(spilled_file_reader_, arrow::ipc::RecordBatchFileReader::Open(
-                                                  spilled_file_is_, reader_options));
   // open data file output stream
   ARROW_ASSIGN_OR_RAISE(data_file_os_,
                         arrow::io::FileOutputStream::Open(options_.data_file, false));
@@ -226,13 +203,8 @@ arrow::Status Splitter::Stop() {
     }
   }
 
-  // close spilled file input stream
-  RETURN_NOT_OK(spilled_file_is_->Close());
   // close data file output Stream
   RETURN_NOT_OK(data_file_os_->Close());
-
-  auto fs = std::make_shared<arrow::fs::LocalFileSystem>();
-  RETURN_NOT_OK(fs->DeleteFile(spilled_file_));
 
   return arrow::Status::OK();
 }
@@ -240,12 +212,17 @@ arrow::Status Splitter::Stop() {
 arrow::Result<std::shared_ptr<PartitionWriter>> Splitter::GetPartitionWriter(
     int32_t partition_id) {
   if (partition_writer_[partition_id] == nullptr) {
+    ARROW_ASSIGN_OR_RAISE(auto spilled_file,
+                          CreateSpilledShuffleFile(configured_dirs_[dir_selection_],
+                                                   sub_dir_selection_[dir_selection_]))
+    sub_dir_selection_[dir_selection_] =
+        (sub_dir_selection_[dir_selection_] + 1) % options_.num_sub_dirs;
+    dir_selection_ = (dir_selection_ + 1) % configured_dirs_.size();
     ARROW_ASSIGN_OR_RAISE(
         partition_writer_[partition_id],
         PartitionWriter::Create(partition_id, options_.buffer_size,
                                 options_.compression_type, last_type_id_, column_type_id_,
-                                schema_, data_file_os_, spilled_file_writer_,
-                                spilled_file_reader_, &spilled_batch_index));
+                                schema_, data_file_os_, spilled_file));
   }
   return partition_writer_[partition_id];
 }
