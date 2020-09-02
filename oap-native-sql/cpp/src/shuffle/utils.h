@@ -17,14 +17,15 @@
 
 #pragma once
 
+#include <iomanip>
+#include <sstream>
+
 #include <arrow/filesystem/filesystem.h>
 #include <arrow/filesystem/localfs.h>
 #include <arrow/filesystem/path_util.h>
 #include <arrow/util/io_util.h>
 #include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_io.hpp>
-#include <iomanip>
-#include <sstream>
 
 namespace sparkcolumnarplugin {
 namespace shuffle {
@@ -34,13 +35,32 @@ static std::string GenerateUUID() {
   return boost::uuids::to_string(generator());
 }
 
-static arrow::Result<std::string> CreateTempShuffleFile(
-    const std::shared_ptr<arrow::fs::LocalFileSystem>& fs,
-    const std::string& configured_dir, int32_t sub_dir_id) {
-  std::stringstream ss;
-  ss << std::setfill('0') << std::setw(2) << std::hex << sub_dir_id;
-  auto dir = arrow::fs::internal::ConcatAbstractPath(configured_dir, ss.str());
-  RETURN_NOT_OK(fs->CreateDir(dir));
+// For test purpose
+static arrow::Result<std::string> CreateTempShuffleDir() {
+  bool exist = true;
+  std::string dir;
+  while (exist) {
+    auto result = arrow::internal::TemporaryDir::Make("columnar-shuffle-");
+    if (result.ok()) {
+      dir = std::move(result.MoveValueUnsafe()->path().ToString());
+      exist = false;
+    } else if (!result.status().IsIOError()) {
+      return result.status();
+    }
+  }
+  return dir;
+}
+
+static arrow::Result<std::string> CreateTempShuffleFile(const std::string& dir) {
+  if (dir.length() == 0) {
+    return arrow::Status::Invalid("Failed to create spilled file, got empty path.");
+  }
+
+  auto fs = std::make_shared<arrow::fs::LocalFileSystem>();
+  ARROW_ASSIGN_OR_RAISE(auto path_info, fs->GetFileInfo(dir));
+  if (path_info.type() == arrow::fs::FileType::NotFound) {
+    RETURN_NOT_OK(fs->CreateDir(dir, true));
+  }
 
   bool exist = true;
   std::string file_path;
@@ -57,33 +77,7 @@ static arrow::Result<std::string> CreateTempShuffleFile(
   return file_path;
 }
 
-static arrow::Result<std::vector<std::string>> GetConfiguredLocalDirs() {
-  auto joined_dirs_c = std::getenv("NATIVESQL_SPARK_LOCAL_DIRS");
-  if (joined_dirs_c != nullptr && strcmp(joined_dirs_c, "") > 0) {
-    auto joined_dirs = std::string(joined_dirs_c);
-    std::string delimiter = ",";
-
-    size_t pos;
-    std::vector<std::string> res;
-    while ((pos = joined_dirs.find(delimiter)) != std::string::npos) {
-      auto dir = joined_dirs.substr(0, pos);
-      if (dir.length() > 0) {
-        res.push_back(std::move(dir));
-      }
-      joined_dirs.erase(0, pos + delimiter.length());
-    }
-    if (joined_dirs.length() > 0) {
-      res.push_back(std::move(joined_dirs));
-    }
-    return res;
-  } else {
-    ARROW_ASSIGN_OR_RAISE(auto arrow_tmp_dir,
-                          arrow::internal::TemporaryDir::Make("columnar-shuffle-"));
-    return std::vector<std::string>{arrow_tmp_dir->path().ToString()};
-  }
-}
-
-static arrow::ipc::IpcWriteOptions GetIpcWriteOptions(
+static arrow::ipc::IpcWriteOptions SplitterIpcWriteOptions(
     arrow::Compression::type compression) {
   auto options = arrow::ipc::IpcWriteOptions::Defaults();
   options.compression = compression;

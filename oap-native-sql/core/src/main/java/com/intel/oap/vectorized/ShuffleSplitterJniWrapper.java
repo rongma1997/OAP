@@ -30,28 +30,19 @@ public class ShuffleSplitterJniWrapper {
    *
    * @param part contains the partitioning parameter needed by native splitter
    * @param bufferSize size of native buffers hold by each partition writer
-   * @param subDirsPerLocalDir SparkConf spark.diskStore.subDirectories
-   * @param localDirs configured local directories where Spark can write files
    * @param codec compression codec
+   * @param dataFile acquired from spark IndexShuffleBlockResolver
    * @return native splitter instance id if created successfully.
-   * @throws RuntimeException
    */
-  public long make(
-      NativePartitioning part,
-      int bufferSize,
-      int subDirsPerLocalDir,
-      String localDirs,
-      String codec)
-      throws RuntimeException {
+  public long make(NativePartitioning part, int bufferSize, String codec, String dataFile) {
     return nativeMake(
         part.getShortName(),
         part.getNumPartitions(),
         part.getSchema(),
         part.getExprList(),
         bufferSize,
-        subDirsPerLocalDir,
-        localDirs,
-        codec);
+        codec,
+        dataFile);
   }
 
   public native long nativeMake(
@@ -60,10 +51,8 @@ public class ShuffleSplitterJniWrapper {
       byte[] schema,
       byte[] exprList,
       int bufferSize,
-      int subDirsPerLocalDir,
-      String localDirs,
-      String codec)
-      throws RuntimeException;
+      String codec,
+      String dataFile);
 
   /**
    * Split one record batch represented by bufAddrs and bufSizes into several batches. The batch is
@@ -74,10 +63,9 @@ public class ShuffleSplitterJniWrapper {
    * @param numRows Rows per batch
    * @param bufAddrs Addresses of buffers
    * @param bufSizes Sizes of buffers
-   * @throws RuntimeException
    */
   public native void split(long splitterId, int numRows, long[] bufAddrs, long[] bufSizes)
-      throws RuntimeException;
+      throws IOException;
 
   /**
    * Write the data remained in the buffers hold by native splitter to each partition's temporary
@@ -85,9 +73,8 @@ public class ShuffleSplitterJniWrapper {
    *
    * @param splitterId splitter instance id
    * @return SplitResult
-   * @throws RuntimeException
    */
-  public native SplitResult stop(long splitterId) throws RuntimeException;
+  public native SplitResult stop(long splitterId) throws IOException;
 
   /**
    * Release resources associated with designated splitter instance.
