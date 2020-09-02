@@ -85,53 +85,49 @@ arrow::Result<std::shared_ptr<PartitionWriter>> PartitionWriter::Create(
 }
 
 arrow::Status PartitionWriter::Stop() {
-  auto start_spill = std::chrono::steady_clock::now();
   ARROW_ASSIGN_OR_RAISE(auto before_write, data_file_os_->Tell())
-  ARROW_ASSIGN_OR_RAISE(
-      auto data_file_writer,
-      arrow::ipc::NewStreamWriter(data_file_os_.get(), schema_,
-                                  SplitterIpcWriteOptions(compression_type_)));
   // copy spilled data blocks
   if (spilled_file_os_ != nullptr) {
+    TIME_NANO_OR_RAISE(spill_time_, Spill());
+    // write EOS
     RETURN_NOT_OK(spilled_file_writer_->Close());
     RETURN_NOT_OK(spilled_file_os_->Close());
 
-    auto read_options = arrow::ipc::IpcReadOptions::Defaults();
-    read_options.use_threads = false;
+    auto start_write = std::chrono::steady_clock::now();
     ARROW_ASSIGN_OR_RAISE(auto spilled_file_is,
                           arrow::io::ReadableFile::Open(spilled_file_));
+    ARROW_ASSIGN_OR_RAISE(auto length, spilled_file_is->GetSize());
+    ARROW_ASSIGN_OR_RAISE(auto buffer, spilled_file_is->Read(length));
+    RETURN_NOT_OK(spilled_file_is->Close());
+    RETURN_NOT_OK(data_file_os_->Write(buffer));
+    auto end_write = std::chrono::steady_clock::now();
+    write_time_ +=
+        std::chrono::duration_cast<std::chrono::nanoseconds>(end_write - start_write)
+            .count();
+  } else {
+    auto start_write = std::chrono::steady_clock::now();
     ARROW_ASSIGN_OR_RAISE(
-        auto spilled_file_reader,
-        arrow::ipc::RecordBatchStreamReader::Open(spilled_file_is, read_options));
-    std::vector<std::shared_ptr<arrow::RecordBatch>> batches;
-    RETURN_NOT_OK(spilled_file_reader->ReadAll(&batches));
-    for (const auto& batch : batches) {
+        auto data_file_writer,
+        arrow::ipc::NewStreamWriter(data_file_os_.get(), schema_,
+                                    SplitterIpcWriteOptions(compression_type_)));
+    ARROW_ASSIGN_OR_RAISE(auto batch, MakeRecordBatchAndReset());
+    if (batch != nullptr) {
       RETURN_NOT_OK(data_file_writer->WriteRecordBatch(*batch));
     }
-    RETURN_NOT_OK(spilled_file_is->Close());
+    // write EOS
+    RETURN_NOT_OK(data_file_writer->Close());
+    auto end_write = std::chrono::steady_clock::now();
+    write_time_ +=
+        std::chrono::duration_cast<std::chrono::nanoseconds>(end_write - start_write)
+            .count();
   }
+
+  ARROW_ASSIGN_OR_RAISE(auto after_write, data_file_os_->Tell());
+  partition_length_ = after_write - before_write;
 
   auto fs = std::make_shared<arrow::fs::LocalFileSystem>();
   RETURN_NOT_OK(fs->DeleteFile(spilled_file_));
 
-  auto end_spill = std::chrono::steady_clock::now();
-  spill_time_ +=
-      std::chrono::duration_cast<std::chrono::nanoseconds>(end_spill - start_spill)
-          .count();
-
-  // write the last record batch
-  ARROW_ASSIGN_OR_RAISE(auto batch, MakeRecordBatchAndReset());
-  if (batch != nullptr) {
-    RETURN_NOT_OK(data_file_writer->WriteRecordBatch(*batch));
-  }
-  // write EOS
-  RETURN_NOT_OK(data_file_writer->Close());
-  ARROW_ASSIGN_OR_RAISE(auto after_write, data_file_os_->Tell());
-  partition_length_ = after_write - before_write;
-
-  auto end_write = std::chrono::steady_clock::now();
-  write_time_ +=
-      std::chrono::duration_cast<std::chrono::nanoseconds>(end_write - end_spill).count();
   return arrow::Status::OK();
 }
 
@@ -139,13 +135,12 @@ arrow::Status PartitionWriter::Spill() {
   ARROW_ASSIGN_OR_RAISE(auto batch, MakeRecordBatchAndReset());
   if (batch != nullptr) {
     if (spilled_file_os_ == nullptr) {
-      auto write_options = arrow::ipc::IpcWriteOptions::Defaults();
-      write_options.use_threads = false;
       ARROW_ASSIGN_OR_RAISE(spilled_file_os_,
                             arrow::io::FileOutputStream::Open(spilled_file_, false));
       ARROW_ASSIGN_OR_RAISE(
           spilled_file_writer_,
-          arrow::ipc::NewStreamWriter(spilled_file_os_.get(), schema_, write_options))
+          arrow::ipc::NewStreamWriter(spilled_file_os_.get(), schema_,
+                                      SplitterIpcWriteOptions(compression_type_)))
     }
     RETURN_NOT_OK(spilled_file_writer_->WriteRecordBatch(*batch));
   }
