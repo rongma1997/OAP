@@ -34,9 +34,7 @@ arrow::Result<std::shared_ptr<PartitionWriter>> PartitionWriter::Create(
     Type::typeId last_type, const std::vector<Type::typeId>& column_type_id,
     const std::shared_ptr<arrow::Schema>& schema,
     const std::shared_ptr<arrow::io::OutputStream>& data_file_os,
-    const std::shared_ptr<arrow::ipc::RecordBatchWriter>& spilled_file_writer,
-    const std::shared_ptr<arrow::ipc::RecordBatchFileReader>& spilled_file_reader,
-    int32_t* spilled_batch_index) {
+    std::string spilled_file) {
   auto buffers = TypeBufferInfos(Type::NUM_TYPES);
   auto binary_bulders = BinaryBuilders();
   auto large_binary_bulders = LargeBinaryBuilders();
@@ -82,8 +80,8 @@ arrow::Result<std::shared_ptr<PartitionWriter>> PartitionWriter::Create(
   }
   return std::make_shared<PartitionWriter>(
       partition_id, capacity, compression_type, last_type, column_type_id, schema,
-      data_file_os, spilled_file_writer, spilled_file_reader, spilled_batch_index,
-      std::move(buffers), std::move(binary_bulders), std::move(large_binary_bulders));
+      data_file_os, std::move(spilled_file), std::move(buffers),
+      std::move(binary_bulders), std::move(large_binary_bulders));
 }
 
 arrow::Status PartitionWriter::Stop() {
@@ -94,18 +92,33 @@ arrow::Status PartitionWriter::Stop() {
       arrow::ipc::NewStreamWriter(data_file_os_.get(), schema_,
                                   SplitterIpcWriteOptions(compression_type_)));
   // copy spilled data blocks
-  if (!spilled_index_.empty()) {
-    for (auto index : spilled_index_) {
-      ARROW_ASSIGN_OR_RAISE(auto batch, spilled_file_reader_->ReadRecordBatch(index));
+  if (spilled_file_os_ != nullptr) {
+    RETURN_NOT_OK(spilled_file_writer_->Close());
+    RETURN_NOT_OK(spilled_file_os_->Close());
+
+    auto read_options = arrow::ipc::IpcReadOptions::Defaults();
+    read_options.use_threads = false;
+    ARROW_ASSIGN_OR_RAISE(auto spilled_file_is,
+                          arrow::io::ReadableFile::Open(spilled_file_));
+    ARROW_ASSIGN_OR_RAISE(
+        auto spilled_file_reader,
+        arrow::ipc::RecordBatchStreamReader::Open(spilled_file_is, read_options));
+    std::vector<std::shared_ptr<arrow::RecordBatch>> batches;
+    RETURN_NOT_OK(spilled_file_reader->ReadAll(&batches));
+    for (const auto& batch : batches) {
       RETURN_NOT_OK(data_file_writer->WriteRecordBatch(*batch));
     }
+    RETURN_NOT_OK(spilled_file_is->Close());
   }
+
+  auto fs = std::make_shared<arrow::fs::LocalFileSystem>();
+  RETURN_NOT_OK(fs->DeleteFile(spilled_file_));
+
   auto end_spill = std::chrono::steady_clock::now();
   spill_time_ +=
       std::chrono::duration_cast<std::chrono::nanoseconds>(end_spill - start_spill)
           .count();
 
-  auto start_write = std::chrono::steady_clock::now();
   // write the last record batch
   ARROW_ASSIGN_OR_RAISE(auto batch, MakeRecordBatchAndReset());
   if (batch != nullptr) {
@@ -115,20 +128,26 @@ arrow::Status PartitionWriter::Stop() {
   RETURN_NOT_OK(data_file_writer->Close());
   ARROW_ASSIGN_OR_RAISE(auto after_write, data_file_os_->Tell());
   partition_length_ = after_write - before_write;
-  // count write time
+
   auto end_write = std::chrono::steady_clock::now();
   write_time_ +=
-      std::chrono::duration_cast<std::chrono::nanoseconds>(end_write - start_write)
-          .count();
+      std::chrono::duration_cast<std::chrono::nanoseconds>(end_write - end_spill).count();
   return arrow::Status::OK();
 }
 
 arrow::Status PartitionWriter::Spill() {
   ARROW_ASSIGN_OR_RAISE(auto batch, MakeRecordBatchAndReset());
   if (batch != nullptr) {
+    if (spilled_file_os_ == nullptr) {
+      auto write_options = arrow::ipc::IpcWriteOptions::Defaults();
+      write_options.use_threads = false;
+      ARROW_ASSIGN_OR_RAISE(spilled_file_os_,
+                            arrow::io::FileOutputStream::Open(spilled_file_, false));
+      ARROW_ASSIGN_OR_RAISE(
+          spilled_file_writer_,
+          arrow::ipc::NewStreamWriter(spilled_file_os_.get(), schema_, write_options))
+    }
     RETURN_NOT_OK(spilled_file_writer_->WriteRecordBatch(*batch));
-    spilled_index_.push_back(*spilled_batch_index_);
-    (*spilled_batch_index_)++;
   }
   return arrow::Status::OK();
 }

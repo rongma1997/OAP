@@ -35,20 +35,53 @@ static std::string GenerateUUID() {
   return boost::uuids::to_string(generator());
 }
 
-// For test purpose
-static arrow::Result<std::string> CreateTempShuffleDir() {
+static arrow::Result<std::string> CreateSpilledShuffleFile(
+    const std::string& configured_dir, int32_t sub_dir_id) {
+  auto fs = std::make_shared<arrow::fs::LocalFileSystem>();
+  std::stringstream ss;
+  ss << std::setfill('0') << std::setw(2) << std::hex << sub_dir_id;
+  auto dir = arrow::fs::internal::ConcatAbstractPath(configured_dir, ss.str());
+  RETURN_NOT_OK(fs->CreateDir(dir));
+
   bool exist = true;
-  std::string dir;
+  std::string file_path;
   while (exist) {
-    auto result = arrow::internal::TemporaryDir::Make("columnar-shuffle-");
-    if (result.ok()) {
-      dir = std::move(result.MoveValueUnsafe()->path().ToString());
+    file_path =
+        arrow::fs::internal::ConcatAbstractPath(dir, "temp_shuffle_" + GenerateUUID());
+    ARROW_ASSIGN_OR_RAISE(auto file_info, fs->GetFileInfo(file_path));
+    if (file_info.type() == arrow::fs::FileType::NotFound) {
       exist = false;
-    } else if (!result.status().IsIOError()) {
-      return result.status();
+      ARROW_ASSIGN_OR_RAISE(auto os, fs->OpenOutputStream(file_path));
+      RETURN_NOT_OK(os->Close());
     }
   }
-  return dir;
+  return file_path;
+}
+
+static arrow::Result<std::vector<std::string>> GetConfiguredLocalDirs() {
+  auto joined_dirs_c = std::getenv("NATIVESQL_SPARK_LOCAL_DIRS");
+  if (joined_dirs_c != nullptr && strcmp(joined_dirs_c, "") > 0) {
+    auto joined_dirs = std::string(joined_dirs_c);
+    std::string delimiter = ",";
+
+    size_t pos;
+    std::vector<std::string> res;
+    while ((pos = joined_dirs.find(delimiter)) != std::string::npos) {
+      auto dir = joined_dirs.substr(0, pos);
+      if (dir.length() > 0) {
+        res.push_back(std::move(dir));
+      }
+      joined_dirs.erase(0, pos + delimiter.length());
+    }
+    if (joined_dirs.length() > 0) {
+      res.push_back(std::move(joined_dirs));
+    }
+    return res;
+  } else {
+    ARROW_ASSIGN_OR_RAISE(auto arrow_tmp_dir,
+                          arrow::internal::TemporaryDir::Make("columnar-shuffle-"));
+    return std::vector<std::string>{arrow_tmp_dir->path().ToString()};
+  }
 }
 
 static arrow::Result<std::string> CreateTempShuffleFile(const std::string& dir) {

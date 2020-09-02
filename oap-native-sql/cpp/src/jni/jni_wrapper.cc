@@ -1106,7 +1106,8 @@ JNIEXPORT jlong JNICALL
 Java_com_intel_oap_vectorized_ShuffleSplitterJniWrapper_nativeMake(
     JNIEnv* env, jobject, jstring partitioning_name_jstr, jint num_partitions,
     jbyteArray schema_arr, jbyteArray expr_arr, jint buffer_size,
-    jstring compression_type_jstr, jstring data_file_jstr) {
+    jstring compression_type_jstr, jstring data_file_jstr, jint num_sub_dirs,
+    jstring local_dirs_jstr) {
   if (partitioning_name_jstr == NULL) {
     env->ThrowNew(illegal_argument_exception_class,
                   std::string("Short partitioning name can't be null").c_str());
@@ -1122,13 +1123,23 @@ Java_com_intel_oap_vectorized_ShuffleSplitterJniWrapper_nativeMake(
                   std::string("Shuffle DataFile can't be null").c_str());
     return 0;
   }
+  if (local_dirs_jstr == NULL) {
+    env->ThrowNew(illegal_argument_exception_class,
+                  std::string("Shuffle DataFile can't be null").c_str());
+    return 0;
+  }
 
   auto partitioning_name_c = env->GetStringUTFChars(partitioning_name_jstr, JNI_FALSE);
   auto partitioning_name = std::string(partitioning_name_c);
   env->ReleaseStringUTFChars(partitioning_name_jstr, partitioning_name_c);
 
   auto splitOptions = SplitOptions::Defaults();
-  splitOptions.buffer_size = buffer_size;
+  if (buffer_size > 0) {
+    splitOptions.buffer_size = buffer_size;
+  }
+  if (num_sub_dirs > 0) {
+    splitOptions.num_sub_dirs = num_sub_dirs;
+  }
 
   if (compression_type_jstr != NULL) {
     auto compression_type_result = GetCompressionType(env, compression_type_jstr);
@@ -1140,6 +1151,10 @@ Java_com_intel_oap_vectorized_ShuffleSplitterJniWrapper_nativeMake(
   auto data_file_c = env->GetStringUTFChars(data_file_jstr, JNI_FALSE);
   splitOptions.data_file = std::string(data_file_c);
   env->ReleaseStringUTFChars(data_file_jstr, data_file_c);
+
+  auto local_dirs = env->GetStringUTFChars(local_dirs_jstr, JNI_FALSE);
+  setenv("NATIVESQL_SPARK_LOCAL_DIRS", local_dirs, 1);
+  env->ReleaseStringUTFChars(local_dirs_jstr, local_dirs);
 
   std::shared_ptr<arrow::Schema> schema;
   // ValueOrDie in MakeSchema
@@ -1256,7 +1271,8 @@ JNIEXPORT jobject JNICALL Java_com_intel_oap_vectorized_ShuffleSplitterJniWrappe
   env->SetLongArrayRegion(partition_length_arr, 0, partition_length.size(), src);
   jobject split_result = env->NewObject(
       split_result_class, split_result_constructor, splitter->TotalComputePidTime(),
-      splitter->TotalWriteTime(), splitter->TotalSpillTime(), splitter->TotalBytesWritten(), partition_length_arr);
+      splitter->TotalWriteTime(), splitter->TotalSpillTime(),
+      splitter->TotalBytesWritten(), partition_length_arr);
 
   return split_result;
 }

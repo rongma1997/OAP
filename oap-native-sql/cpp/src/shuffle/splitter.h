@@ -35,6 +35,7 @@ namespace shuffle {
 
 struct SplitOptions {
   int32_t buffer_size = kDefaultSplitterBufferSize;
+  int32_t num_sub_dirs = kDefaultNumSubDirs;
   arrow::Compression::type compression_type = arrow::Compression::UNCOMPRESSED;
 
   std::string data_file;
@@ -100,10 +101,6 @@ class Splitter {
   std::shared_ptr<arrow::Schema> schema_;
   SplitOptions options_;
 
-  // Temporary file to hold all spilled data, which shares the same directory of
-  // options_.data_file
-  std::string spilled_file_;
-
   int64_t total_bytes_written_ = 0;
   int64_t total_write_time_ = 0;
   int64_t total_spill_time_ = 0;
@@ -115,11 +112,12 @@ class Splitter {
   Type::typeId last_type_id_ = Type::SHUFFLE_NOT_IMPLEMENTED;
   std::vector<Type::typeId> column_type_id_;
 
-  std::shared_ptr<arrow::io::OutputStream> spilled_file_os_;
-  std::shared_ptr<arrow::ipc::RecordBatchWriter> spilled_file_writer_;
-  std::shared_ptr<arrow::ipc::RecordBatchFileReader> spilled_file_reader_;
+  // configured local dirs for spilled file
+  int32_t dir_selection_ = 0;
+  std::vector<int32_t> sub_dir_selection_;
+  std::vector<std::string> configured_dirs_;
+
   std::shared_ptr<arrow::io::OutputStream> data_file_os_;
-  int32_t spilled_batch_index = 0;
 };
 
 class RoundRobinSplitter : public Splitter {
