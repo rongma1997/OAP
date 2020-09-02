@@ -68,19 +68,15 @@ class SplitterTest : public ::testing::Test {
     }
   }
 
-  void CheckFileExsists(const std::string& file_name) {
+  static void CheckFileExsists(const std::string& file_name) {
     ASSERT_EQ(*arrow::internal::FileExists(
                   *arrow::internal::PlatformFilename::FromString(file_name)),
               true);
   }
 
-  arrow::Status MakeSplitter(const std::string& name, int32_t num_partitions,
-                             int32_t buffer_size) {
-    return arrow::Status::OK();
-  }
-
   arrow::Result<std::shared_ptr<arrow::RecordBatch>> TakeRows(
-      std::shared_ptr<arrow::RecordBatch> input_batch, std::string json_idx) {
+      const std::shared_ptr<arrow::RecordBatch>& input_batch,
+      const std::string& json_idx) {
     std::shared_ptr<arrow::Array> take_idx;
     ASSERT_NOT_OK(
         arrow::ipc::internal::json::ArrayFromJSON(arrow::int32(), json_idx, &take_idx));
@@ -203,9 +199,6 @@ TEST_F(SplitterTest, TestRoundRobinSplitter) {
   output_batches.push_back(std::move(res_batch));
   ARROW_ASSIGN_OR_THROW(res_batch, TakeRows(input_batch_1_, "[1, 3]"))
   output_batches.push_back(std::move(res_batch));
-
-  // verify data file
-  CheckFileExsists(splitter_->DataFile());
 
   // read first block
   std::shared_ptr<arrow::ipc::RecordBatchReader> file_reader;
