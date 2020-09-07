@@ -88,10 +88,6 @@ arrow::Status Splitter::Init() {
           arrow::fs::internal::GetAbstractPathParent(options_.data_file).first));
   ARROW_ASSIGN_OR_RAISE(spilled_file_os_,
                         arrow::io::FileOutputStream::Open(spilled_file_, false));
-  ARROW_ASSIGN_OR_RAISE(spilled_file_writer_,
-                        arrow::ipc::NewFileWriter(
-                            spilled_file_os_.get(), schema_,
-                            SplitterIpcWriteOptions(arrow::Compression::UNCOMPRESSED)));
 
   return arrow::Status::OK();
 }
@@ -195,22 +191,15 @@ arrow::Status Splitter::Split(const arrow::RecordBatch& rb) {
 }
 
 arrow::Status Splitter::Stop() {
-  // write EOF to spilled file
-  RETURN_NOT_OK(spilled_file_writer_->Close());
-  // close spilled file output stream
-  RETURN_NOT_OK(spilled_file_os_->Close());
-
-  auto reader_options = arrow::ipc::IpcReadOptions::Defaults();
-  reader_options.use_threads = false;
+  auto start = std::chrono::steady_clock::now();
   // open spilled file input stream
-  ARROW_ASSIGN_OR_RAISE(auto spilled_file_is_,
-                        arrow::io::ReadableFile::Open(spilled_file_));
-  // create record batch file reader, no need to close
-  ARROW_ASSIGN_OR_RAISE(spilled_file_reader_, arrow::ipc::RecordBatchFileReader::Open(
-                                                  spilled_file_is_, reader_options));
+  ARROW_ASSIGN_OR_RAISE(spilled_file_is_, arrow::io::ReadableFile::Open(spilled_file_));
   // open data file output stream
   ARROW_ASSIGN_OR_RAISE(data_file_os_,
                         arrow::io::FileOutputStream::Open(options_.data_file, false));
+  auto end = std::chrono::steady_clock::now();
+  total_write_time_ +=
+      std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
 
   // stop PartitionWriter and collect metrics
   for (const auto& writer : partition_writer_) {
@@ -226,13 +215,16 @@ arrow::Status Splitter::Stop() {
     }
   }
 
-  // close spilled file input stream
+  start = std::chrono::steady_clock::now();
+  RETURN_NOT_OK(spilled_file_os_->Close());
   RETURN_NOT_OK(spilled_file_is_->Close());
-  // close data file output Stream
   RETURN_NOT_OK(data_file_os_->Close());
 
   auto fs = std::make_shared<arrow::fs::LocalFileSystem>();
   RETURN_NOT_OK(fs->DeleteFile(spilled_file_));
+  end = std::chrono::steady_clock::now();
+  total_write_time_ +=
+      std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
 
   return arrow::Status::OK();
 }
@@ -242,10 +234,9 @@ arrow::Result<std::shared_ptr<PartitionWriter>> Splitter::GetPartitionWriter(
   if (partition_writer_[partition_id] == nullptr) {
     ARROW_ASSIGN_OR_RAISE(
         partition_writer_[partition_id],
-        PartitionWriter::Create(partition_id, options_.buffer_size,
-                                options_.compression_type, last_type_id_, column_type_id_,
-                                schema_, data_file_os_, spilled_file_writer_,
-                                spilled_file_reader_, &spilled_batch_index));
+        PartitionWriter::Create(
+            partition_id, options_.buffer_size, options_.compression_type, last_type_id_,
+            column_type_id_, schema_, data_file_os_, spilled_file_os_, spilled_file_is_));
   }
   return partition_writer_[partition_id];
 }

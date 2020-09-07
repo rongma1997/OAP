@@ -115,11 +115,9 @@ class Splitter {
   Type::typeId last_type_id_ = Type::SHUFFLE_NOT_IMPLEMENTED;
   std::vector<Type::typeId> column_type_id_;
 
-  std::shared_ptr<arrow::io::OutputStream> spilled_file_os_;
-  std::shared_ptr<arrow::ipc::RecordBatchWriter> spilled_file_writer_;
-  std::shared_ptr<arrow::ipc::RecordBatchFileReader> spilled_file_reader_;
   std::shared_ptr<arrow::io::OutputStream> data_file_os_;
-  int32_t spilled_batch_index = 0;
+  std::shared_ptr<arrow::io::OutputStream> spilled_file_os_;
+  std::shared_ptr<arrow::io::ReadableFile> spilled_file_is_;
 };
 
 class RoundRobinSplitter : public Splitter {

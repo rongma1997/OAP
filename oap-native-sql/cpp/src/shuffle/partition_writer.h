@@ -103,15 +103,15 @@ arrow::enable_if_binary_like<T, arrow::Status> inline WriteBinary(
 }  // namespace detail
 class PartitionWriter {
  public:
-  PartitionWriter(
-      int32_t partition_id, int64_t capacity, arrow::Compression::type compression_type,
-      Type::typeId last_type, const std::vector<Type::typeId>& column_type_id,
-      const std::shared_ptr<arrow::Schema>& schema,
-      const std::shared_ptr<arrow::io::OutputStream>& data_file_os,
-      const std::shared_ptr<arrow::ipc::RecordBatchWriter>& spilled_file_writer,
-      const std::shared_ptr<arrow::ipc::RecordBatchFileReader>& spilled_file_reader,
-      int32_t* spilled_batch_index, TypeBufferInfos buffers,
-      BinaryBuilders binary_builders, LargeBinaryBuilders large_binary_builders)
+  PartitionWriter(int32_t partition_id, int64_t capacity,
+                  arrow::Compression::type compression_type, Type::typeId last_type,
+                  const std::vector<Type::typeId>& column_type_id,
+                  const std::shared_ptr<arrow::Schema>& schema,
+                  const std::shared_ptr<arrow::io::OutputStream>& data_file_os,
+                  const std::shared_ptr<arrow::io::OutputStream>& spilled_file_os,
+                  const std::shared_ptr<arrow::io::ReadableFile>& spilled_file_is,
+                  TypeBufferInfos buffers, BinaryBuilders binary_builders,
+                  LargeBinaryBuilders large_binary_builders)
       : partition_id_(partition_id),
         capacity_(capacity),
         compression_type_(compression_type),
@@ -119,9 +119,8 @@ class PartitionWriter {
         column_type_id_(column_type_id),
         schema_(schema),
         data_file_os_(data_file_os),
-        spilled_file_writer_(spilled_file_writer),
-        spilled_file_reader_(spilled_file_reader),
-        spilled_batch_index_(spilled_batch_index),
+        spilled_file_os_(spilled_file_os),
+        spilled_file_is_(spilled_file_is),
         buffers_(std::move(buffers)),
         binary_builders_(std::move(binary_builders)),
         large_binary_builders_(std::move(large_binary_builders)),
@@ -132,9 +131,8 @@ class PartitionWriter {
       Type::typeId last_type, const std::vector<Type::typeId>& column_type_id,
       const std::shared_ptr<arrow::Schema>& schema,
       const std::shared_ptr<arrow::io::OutputStream>& data_file_os,
-      const std::shared_ptr<arrow::ipc::RecordBatchWriter>& spilled_file_writer,
-      const std::shared_ptr<arrow::ipc::RecordBatchFileReader>& spilled_file_reader,
-      int32_t* spilled_batch_index);
+      const std::shared_ptr<arrow::io::OutputStream>& spilled_file_os,
+      const std::shared_ptr<arrow::io::ReadableFile>& spilled_file_is);
 
   arrow::Status Stop();
 
@@ -248,11 +246,8 @@ class PartitionWriter {
   const std::vector<Type::typeId>& column_type_id_;
   const std::shared_ptr<arrow::Schema>& schema_;
   const std::shared_ptr<arrow::io::OutputStream>& data_file_os_;
-  const std::shared_ptr<arrow::ipc::RecordBatchWriter>& spilled_file_writer_;
-  const std::shared_ptr<arrow::ipc::RecordBatchFileReader>& spilled_file_reader_;
-
-  // can be used and modified across different PartitionWriter
-  int32_t* spilled_batch_index_;
+  const std::shared_ptr<arrow::io::OutputStream>& spilled_file_os_;
+  const std::shared_ptr<arrow::io::ReadableFile>& spilled_file_is_;
 
   TypeBufferInfos buffers_;
   BinaryBuilders binary_builders_;
@@ -262,7 +257,8 @@ class PartitionWriter {
 
   std::vector<int64_t> write_offset_;
 
-  std::vector<int32_t> spilled_index_;
+  std::shared_ptr<arrow::ipc::RecordBatchWriter> spilled_file_writer_;
+  std::vector<std::pair<int64_t, int64_t>> spilled_index_;
 
   int64_t write_time_ = 0;
   int64_t spill_time_ = 0;

@@ -25,6 +25,10 @@
 namespace sparkcolumnarplugin {
 namespace shuffle {
 
+// <arrow/ipc/metadata_internal.h>
+// This 0xFFFFFFFF value is the first 4 bytes of a valid IPC message
+constexpr int32_t kIpcContinuationToken = -1;
+
 static constexpr int32_t kDefaultSplitterBufferSize = 4096;
 static constexpr int32_t kDefaultNumSubDirs = 64;
 
