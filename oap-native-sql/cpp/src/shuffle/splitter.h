@@ -115,8 +115,8 @@ class Splitter {
   Type::typeId last_type_id_ = Type::SHUFFLE_NOT_IMPLEMENTED;
   std::vector<Type::typeId> column_type_id_;
 
-  int data_file_fd_;
-  int spilled_file_fd_;
+  int data_file_fd_ = -1;
+  int spilled_file_fd_ = -1;
   std::shared_ptr<arrow::io::FileOutputStream> data_file_os_;
   std::shared_ptr<arrow::io::FileOutputStream> spilled_file_os_;
 };

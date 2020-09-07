@@ -28,9 +28,6 @@
 #include "shuffle/partition_writer.h"
 #include "shuffle/utils.h"
 
-// see notes on Linux read/write manpage
-#define ARROW_MAX_IO_CHUNKSIZE 0x7ffff000
-
 namespace sparkcolumnarplugin {
 namespace shuffle {
 
@@ -102,9 +99,8 @@ arrow::Status PartitionWriter::Stop() {
       int ret = 0;
       int bytes_written = 0;
       while (ret != -1 && bytes_written < offset.second) {
-        int64_t chunksize = std::min(static_cast<int64_t>(ARROW_MAX_IO_CHUNKSIZE),
-                                     offset.second - bytes_written);
-        ret = sendfile(data_file_fd_, spilled_file_fd_, &off, chunksize);
+        ret = sendfile(data_file_fd_, spilled_file_fd_, &off,
+                       offset.second - bytes_written);
         if (ret != -1) {
           bytes_written += ret;
         }
