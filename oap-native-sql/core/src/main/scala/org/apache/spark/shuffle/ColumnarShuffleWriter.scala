@@ -84,6 +84,7 @@ class ColumnarShuffleWriter[K, V](
     }
 
     val dataTmp = Utils.tempFileWith(shuffleBlockResolver.getDataFile(dep.shuffleId, mapId))
+    logWarning("Task attempt id: " + TaskContext.get().taskAttemptId())
     if (nativeSplitter == 0) {
       nativeSplitter = jniWrapper.make(
         dep.nativePartitioning,
