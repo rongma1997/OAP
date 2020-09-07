@@ -132,11 +132,12 @@ endmacro()
 endif()
 
 if(BENCHMARKS)
+  find_package(ArrowTesting REQUIRED)
   find_package(GTest)
   add_definitions(-DBENCHMARK_FILE_PATH="file://${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/source_files/")
 macro(package_add_benchmark TESTNAME)
   add_executable(${TESTNAME} ${ARGN})
-  target_link_libraries(${TESTNAME} gtest gmock gtest_main spark_columnar_jni parquet ${CMAKE_THREAD_LIBS_INIT})
+  target_link_libraries(${TESTNAME} gtest gmock gtest_main spark_columnar_jni parquet arrow_testing ${CMAKE_THREAD_LIBS_INIT})
   target_include_directories(${TESTNAME} PUBLIC ${source_root_directory})
   gtest_discover_tests(${TESTNAME}
     WORKING_DIRECTORY ${PROJECT_DIR}

@@ -31,6 +31,18 @@ static constexpr int32_t kDefaultNumSubDirs = 64;
 // This 0xFFFFFFFF value is the first 4 bytes of a valid IPC message
 static constexpr int32_t kIpcContinuationToken = -1;
 
+struct SplitOptions {
+  int32_t buffer_size = kDefaultSplitterBufferSize;
+  int32_t num_sub_dirs = kDefaultNumSubDirs;
+  arrow::Compression::type compression_type = arrow::Compression::UNCOMPRESSED;
+
+  std::string data_file;
+
+  int64_t thread_id = -1;
+  int64_t task_attempt_id = -1;
+  static SplitOptions Defaults();
+};
+
 struct BufferInfo {
   std::shared_ptr<arrow::Buffer> validity_buffer;
   std::shared_ptr<arrow::Buffer> value_buffer;

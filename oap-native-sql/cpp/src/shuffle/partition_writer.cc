@@ -30,9 +30,9 @@ namespace sparkcolumnarplugin {
 namespace shuffle {
 
 arrow::Result<std::shared_ptr<PartitionWriter>> PartitionWriter::Create(
-    int32_t partition_id, int64_t capacity, arrow::Compression::type compression_type,
-    Type::typeId last_type, const std::vector<Type::typeId>& column_type_id,
-    const std::shared_ptr<arrow::Schema>& schema,
+    int32_t partition_id, Type::typeId last_type,
+    const std::vector<Type::typeId>& column_type_id,
+    const std::shared_ptr<arrow::Schema>& schema, const SplitOptions& options,
     const std::shared_ptr<arrow::io::FileOutputStream>& data_file_os,
     std::string spilled_file_dir) {
   auto buffers = TypeBufferInfos(Type::NUM_TYPES);
@@ -61,12 +61,14 @@ arrow::Result<std::shared_ptr<PartitionWriter>> PartitionWriter::Create(
         uint8_t* validity_addr;
         uint8_t* value_addr;
 
-        ARROW_ASSIGN_OR_RAISE(validity_buffer, arrow::AllocateEmptyBitmap(capacity))
+        ARROW_ASSIGN_OR_RAISE(validity_buffer,
+                              arrow::AllocateEmptyBitmap(options.buffer_size))
         if (type_id == Type::SHUFFLE_BIT) {
-          ARROW_ASSIGN_OR_RAISE(value_buffer, arrow::AllocateEmptyBitmap(capacity))
-        } else {
           ARROW_ASSIGN_OR_RAISE(value_buffer,
-                                arrow::AllocateBuffer(capacity * (1 << type_id)))
+                                arrow::AllocateEmptyBitmap(options.buffer_size))
+        } else {
+          ARROW_ASSIGN_OR_RAISE(
+              value_buffer, arrow::AllocateBuffer(options.buffer_size * (1 << type_id)))
         }
         validity_addr = validity_buffer->mutable_data();
         value_addr = value_buffer->mutable_data();
@@ -79,9 +81,9 @@ arrow::Result<std::shared_ptr<PartitionWriter>> PartitionWriter::Create(
     }
   }
   return std::make_shared<PartitionWriter>(
-      partition_id, capacity, compression_type, last_type, column_type_id, schema,
-      data_file_os, std::move(spilled_file_dir), std::move(buffers),
-      std::move(binary_bulders), std::move(large_binary_bulders));
+      partition_id, last_type, column_type_id, schema, options, data_file_os,
+      std::move(spilled_file_dir), std::move(buffers), std::move(binary_bulders),
+      std::move(large_binary_bulders));
 }
 
 arrow::Status PartitionWriter::Stop() {
@@ -111,7 +113,7 @@ arrow::Status PartitionWriter::Stop() {
       int64_t body_length;
       RETURN_NOT_OK(arrow::ipc::WriteRecordBatch(
           *batch, 0, data_file_os_.get(), &metadata_length, &body_length,
-          SplitterIpcWriteOptions(compression_type_)));
+          SplitterIpcWriteOptions(options_.compression_type)));
     }
     // write EOS
     constexpr int32_t kZeroLength = 0;
@@ -121,7 +123,7 @@ arrow::Status PartitionWriter::Stop() {
     ARROW_ASSIGN_OR_RAISE(
         auto data_file_writer,
         arrow::ipc::NewStreamWriter(data_file_os_.get(), schema_,
-                                    SplitterIpcWriteOptions(compression_type_)));
+                                    SplitterIpcWriteOptions(options_.compression_type)));
     // write last record batch, it is the only batch to write so it can't be null
     ARROW_ASSIGN_OR_RAISE(auto batch, MakeRecordBatchAndReset());
     if (batch == nullptr) {
@@ -153,7 +155,7 @@ arrow::Status PartitionWriter::Spill() {
       ARROW_ASSIGN_OR_RAISE(
           spilled_file_writer_,
           arrow::ipc::NewStreamWriter(spilled_file_os_.get(), schema_,
-                                      SplitterIpcWriteOptions(compression_type_)))
+                                      SplitterIpcWriteOptions(options_.compression_type)))
     }
     RETURN_NOT_OK(spilled_file_writer_->WriteRecordBatch(*batch));
   }
