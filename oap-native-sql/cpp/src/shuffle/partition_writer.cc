@@ -22,9 +22,14 @@
 #include <arrow/io/file.h>
 #include <arrow/ipc/api.h>
 #include <arrow/record_batch.h>
+#include <sys/sendfile.h>
+#include <iostream>
 
 #include "shuffle/partition_writer.h"
 #include "shuffle/utils.h"
+
+// see notes on Linux read/write manpage
+#define ARROW_MAX_IO_CHUNKSIZE 0x7ffff000
 
 namespace sparkcolumnarplugin {
 namespace shuffle {
@@ -32,11 +37,9 @@ namespace shuffle {
 arrow::Result<std::shared_ptr<PartitionWriter>> PartitionWriter::Create(
     int32_t partition_id, int64_t capacity, arrow::Compression::type compression_type,
     Type::typeId last_type, const std::vector<Type::typeId>& column_type_id,
-    const std::shared_ptr<arrow::Schema>& schema,
-    const std::shared_ptr<arrow::io::OutputStream>& data_file_os,
-    const std::shared_ptr<arrow::ipc::RecordBatchWriter>& spilled_file_writer,
-    const std::shared_ptr<arrow::ipc::RecordBatchFileReader>& spilled_file_reader,
-    int32_t* spilled_batch_index) {
+    const std::shared_ptr<arrow::Schema>& schema, int data_file_fd, int spilled_file_fd,
+    const std::shared_ptr<arrow::io::FileOutputStream>& data_file_os,
+    const std::shared_ptr<arrow::io::FileOutputStream>& spilled_file_os) {
   auto buffers = TypeBufferInfos(Type::NUM_TYPES);
   auto binary_bulders = BinaryBuilders();
   auto large_binary_bulders = LargeBinaryBuilders();
@@ -80,42 +83,52 @@ arrow::Result<std::shared_ptr<PartitionWriter>> PartitionWriter::Create(
       } break;
     }
   }
+
   return std::make_shared<PartitionWriter>(
       partition_id, capacity, compression_type, last_type, column_type_id, schema,
-      data_file_os, spilled_file_writer, spilled_file_reader, spilled_batch_index,
-      std::move(buffers), std::move(binary_bulders), std::move(large_binary_bulders));
+      data_file_fd, spilled_file_fd, data_file_os, spilled_file_os, std::move(buffers),
+      std::move(binary_bulders), std::move(large_binary_bulders));
 }
 
 arrow::Status PartitionWriter::Stop() {
-  auto start_spill = std::chrono::steady_clock::now();
-  ARROW_ASSIGN_OR_RAISE(auto before_write, data_file_os_->Tell())
-  ARROW_ASSIGN_OR_RAISE(
-      auto data_file_writer,
-      arrow::ipc::NewStreamWriter(data_file_os_.get(), schema_,
-                                  SplitterIpcWriteOptions(compression_type_)));
-  // copy spilled data blocks
-  if (!spilled_index_.empty()) {
-    for (auto index : spilled_index_) {
-      ARROW_ASSIGN_OR_RAISE(auto batch, spilled_file_reader_->ReadRecordBatch(index));
-      RETURN_NOT_OK(data_file_writer->WriteRecordBatch(*batch));
-    }
+  if (spilled_file_writer_ != nullptr) {
+    TIME_NANO_OR_RAISE(spill_time_, Spill(true));
   }
-  auto end_spill = std::chrono::steady_clock::now();
-  spill_time_ +=
-      std::chrono::duration_cast<std::chrono::nanoseconds>(end_spill - start_spill)
-          .count();
-
   auto start_write = std::chrono::steady_clock::now();
-  // write the last record batch
-  ARROW_ASSIGN_OR_RAISE(auto batch, MakeRecordBatchAndReset());
-  if (batch != nullptr) {
+  ARROW_ASSIGN_OR_RAISE(auto before_write, data_file_os_->Tell());
+  if (!spilled_file_offsets_.empty()) {
+    for (const auto& offset : spilled_file_offsets_) {
+      auto off = offset.first;
+      int ret = 0;
+      int bytes_written = 0;
+      while (ret != -1 && bytes_written < offset.second) {
+        int64_t chunksize = std::min(static_cast<int64_t>(ARROW_MAX_IO_CHUNKSIZE),
+                                     offset.second - bytes_written);
+        ret = sendfile(data_file_fd_, spilled_file_fd_, &off, chunksize);
+        if (ret != -1) {
+          bytes_written += ret;
+        }
+      }
+      if (ret == -1) {
+        return arrow::internal::IOErrorFromErrno(errno, "Error in sendfile");
+      }
+    }
+  } else {
+    ARROW_ASSIGN_OR_RAISE(
+        auto data_file_writer,
+        arrow::ipc::NewStreamWriter(data_file_os_.get(), schema_,
+                                    SplitterIpcWriteOptions(compression_type_)));
+    ARROW_ASSIGN_OR_RAISE(auto batch, MakeRecordBatchAndReset());
+    if (batch == nullptr) {
+      return arrow::Status::Invalid("Partition writer can't have emtpy partition");
+    }
     RETURN_NOT_OK(data_file_writer->WriteRecordBatch(*batch));
+    RETURN_NOT_OK(data_file_writer->Close());
   }
-  // write EOS
-  RETURN_NOT_OK(data_file_writer->Close());
+
   ARROW_ASSIGN_OR_RAISE(auto after_write, data_file_os_->Tell());
   partition_length_ = after_write - before_write;
-  // count write time
+
   auto end_write = std::chrono::steady_clock::now();
   write_time_ +=
       std::chrono::duration_cast<std::chrono::nanoseconds>(end_write - start_write)
@@ -123,12 +136,22 @@ arrow::Status PartitionWriter::Stop() {
   return arrow::Status::OK();
 }
 
-arrow::Status PartitionWriter::Spill() {
+arrow::Status PartitionWriter::Spill(bool close_writer) {
   ARROW_ASSIGN_OR_RAISE(auto batch, MakeRecordBatchAndReset());
   if (batch != nullptr) {
+    if (spilled_file_writer_ == nullptr) {
+      ARROW_ASSIGN_OR_RAISE(
+          spilled_file_writer_,
+          arrow::ipc::NewStreamWriter(spilled_file_os_.get(), schema_,
+                                      SplitterIpcWriteOptions(compression_type_)));
+    }
+    ARROW_ASSIGN_OR_RAISE(auto before_write, spilled_file_os_->Tell());
     RETURN_NOT_OK(spilled_file_writer_->WriteRecordBatch(*batch));
-    spilled_index_.push_back(*spilled_batch_index_);
-    (*spilled_batch_index_)++;
+    if (close_writer) {
+      RETURN_NOT_OK(spilled_file_writer_->Close());
+    }
+    ARROW_ASSIGN_OR_RAISE(auto after_write, spilled_file_os_->Tell());
+    spilled_file_offsets_.emplace_back(before_write, after_write - before_write);
   }
   return arrow::Status::OK();
 }

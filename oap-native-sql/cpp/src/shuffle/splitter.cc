@@ -81,17 +81,22 @@ arrow::Status Splitter::Init() {
     ARROW_ASSIGN_OR_RAISE(auto dir, CreateTempShuffleDir());
     ARROW_ASSIGN_OR_RAISE(options_.data_file, CreateTempShuffleFile(dir));
   }
+  // open data file output stream, write only
+  ARROW_ASSIGN_OR_RAISE(data_file_os_,
+                        arrow::io::FileOutputStream::Open(options_.data_file, false));
+  data_file_fd_ = data_file_os_->file_descriptor();
 
   ARROW_ASSIGN_OR_RAISE(
       spilled_file_,
       CreateTempShuffleFile(
           arrow::fs::internal::GetAbstractPathParent(options_.data_file).first));
+  ARROW_ASSIGN_OR_RAISE(auto spilled_file_name,
+                        arrow::internal::PlatformFilename::FromString(spilled_file_));
+  ARROW_ASSIGN_OR_RAISE(spilled_file_fd_,
+                        arrow::internal::FileOpenWritable(
+                            spilled_file_name, /*write_only=*/false));  // read write
   ARROW_ASSIGN_OR_RAISE(spilled_file_os_,
-                        arrow::io::FileOutputStream::Open(spilled_file_, false));
-  ARROW_ASSIGN_OR_RAISE(spilled_file_writer_,
-                        arrow::ipc::NewFileWriter(
-                            spilled_file_os_.get(), schema_,
-                            SplitterIpcWriteOptions(arrow::Compression::UNCOMPRESSED)));
+                        arrow::io::FileOutputStream::Open(spilled_file_fd_));
 
   return arrow::Status::OK();
 }
@@ -195,23 +200,6 @@ arrow::Status Splitter::Split(const arrow::RecordBatch& rb) {
 }
 
 arrow::Status Splitter::Stop() {
-  // write EOF to spilled file
-  RETURN_NOT_OK(spilled_file_writer_->Close());
-  // close spilled file output stream
-  RETURN_NOT_OK(spilled_file_os_->Close());
-
-  auto reader_options = arrow::ipc::IpcReadOptions::Defaults();
-  reader_options.use_threads = false;
-  // open spilled file input stream
-  ARROW_ASSIGN_OR_RAISE(auto spilled_file_is_,
-                        arrow::io::ReadableFile::Open(spilled_file_));
-  // create record batch file reader, no need to close
-  ARROW_ASSIGN_OR_RAISE(spilled_file_reader_, arrow::ipc::RecordBatchFileReader::Open(
-                                                  spilled_file_is_, reader_options));
-  // open data file output stream
-  ARROW_ASSIGN_OR_RAISE(data_file_os_,
-                        arrow::io::FileOutputStream::Open(options_.data_file, false));
-
   // stop PartitionWriter and collect metrics
   for (const auto& writer : partition_writer_) {
     if (writer != nullptr) {
@@ -226,9 +214,7 @@ arrow::Status Splitter::Stop() {
     }
   }
 
-  // close spilled file input stream
-  RETURN_NOT_OK(spilled_file_is_->Close());
-  // close data file output Stream
+  RETURN_NOT_OK(spilled_file_os_->Close());
   RETURN_NOT_OK(data_file_os_->Close());
 
   auto fs = std::make_shared<arrow::fs::LocalFileSystem>();
@@ -244,8 +230,7 @@ arrow::Result<std::shared_ptr<PartitionWriter>> Splitter::GetPartitionWriter(
         partition_writer_[partition_id],
         PartitionWriter::Create(partition_id, options_.buffer_size,
                                 options_.compression_type, last_type_id_, column_type_id_,
-                                schema_, data_file_os_, spilled_file_writer_,
-                                spilled_file_reader_, &spilled_batch_index));
+                                schema_, data_file_fd_, spilled_file_fd_, data_file_os_, spilled_file_os_));
   }
   return partition_writer_[partition_id];
 }
