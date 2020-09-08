@@ -108,7 +108,7 @@ class PartitionWriter {
                   const std::vector<Type::typeId>& column_type_id,
                   const std::shared_ptr<arrow::Schema>& schema,
                   const std::shared_ptr<arrow::io::FileOutputStream>& data_file_os,
-                  std::string spilled_file, TypeBufferInfos buffers,
+                  std::string spilled_file_dir, TypeBufferInfos buffers,
                   BinaryBuilders binary_builders,
                   LargeBinaryBuilders large_binary_builders)
       : partition_id_(partition_id),
@@ -118,7 +118,7 @@ class PartitionWriter {
         column_type_id_(column_type_id),
         schema_(schema),
         data_file_os_(data_file_os),
-        spilled_file_(std::move(spilled_file)),
+        spilled_file_dir_(std::move(spilled_file_dir)),
         buffers_(std::move(buffers)),
         binary_builders_(std::move(binary_builders)),
         large_binary_builders_(std::move(large_binary_builders)),
@@ -129,7 +129,7 @@ class PartitionWriter {
       Type::typeId last_type, const std::vector<Type::typeId>& column_type_id,
       const std::shared_ptr<arrow::Schema>& schema,
       const std::shared_ptr<arrow::io::FileOutputStream>& data_file_os,
-      std::string spilled_file);
+      std::string spilled_file_dir);
 
   arrow::Status Stop();
 
@@ -237,6 +237,7 @@ class PartitionWriter {
 
   const int32_t partition_id_;
   const int64_t capacity_;
+  const arrow::Compression::type compression_type_;
   const Type::typeId last_type_;
 
   // hold references to splitter
@@ -244,21 +245,21 @@ class PartitionWriter {
   const std::shared_ptr<arrow::Schema>& schema_;
   const std::shared_ptr<arrow::io::FileOutputStream>& data_file_os_;
 
-  std::string spilled_file_;
-  std::shared_ptr<arrow::io::FileOutputStream> spilled_file_os_;
-  std::shared_ptr<arrow::ipc::RecordBatchWriter> spilled_file_writer_;
+  std::string spilled_file_dir_;
 
   TypeBufferInfos buffers_;
   BinaryBuilders binary_builders_;
   LargeBinaryBuilders large_binary_builders_;
-
-  arrow::Compression::type compression_type_;
 
   std::vector<int64_t> write_offset_;
 
   int64_t write_time_ = 0;
   int64_t spill_time_ = 0;
   int64_t partition_length_ = 0;
+
+  std::string spilled_file_;
+  std::shared_ptr<arrow::io::FileOutputStream> spilled_file_os_;
+  std::shared_ptr<arrow::ipc::RecordBatchWriter> spilled_file_writer_;
 };
 
 }  // namespace shuffle

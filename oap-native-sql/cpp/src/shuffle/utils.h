@@ -35,27 +35,14 @@ static std::string GenerateUUID() {
   return boost::uuids::to_string(generator());
 }
 
-static arrow::Result<std::string> CreateSpilledShuffleFile(
+static arrow::Result<std::string> GetSpilledShuffleFileDir(
     const std::string& configured_dir, int32_t sub_dir_id) {
   auto fs = std::make_shared<arrow::fs::LocalFileSystem>();
   std::stringstream ss;
   ss << std::setfill('0') << std::setw(2) << std::hex << sub_dir_id;
   auto dir = arrow::fs::internal::ConcatAbstractPath(configured_dir, ss.str());
   RETURN_NOT_OK(fs->CreateDir(dir));
-
-  bool exist = true;
-  std::string file_path;
-  while (exist) {
-    file_path =
-        arrow::fs::internal::ConcatAbstractPath(dir, "temp_shuffle_" + GenerateUUID());
-    ARROW_ASSIGN_OR_RAISE(auto file_info, fs->GetFileInfo(file_path));
-    if (file_info.type() == arrow::fs::FileType::NotFound) {
-      exist = false;
-      ARROW_ASSIGN_OR_RAISE(auto os, fs->OpenOutputStream(file_path));
-      RETURN_NOT_OK(os->Close());
-    }
-  }
-  return file_path;
+  return dir;
 }
 
 static arrow::Result<std::vector<std::string>> GetConfiguredLocalDirs() {

@@ -35,7 +35,7 @@ arrow::Result<std::shared_ptr<PartitionWriter>> PartitionWriter::Create(
     Type::typeId last_type, const std::vector<Type::typeId>& column_type_id,
     const std::shared_ptr<arrow::Schema>& schema,
     const std::shared_ptr<arrow::io::FileOutputStream>& data_file_os,
-    std::string spilled_file) {
+    std::string spilled_file_dir) {
   auto buffers = TypeBufferInfos(Type::NUM_TYPES);
   auto binary_bulders = BinaryBuilders();
   auto large_binary_bulders = LargeBinaryBuilders();
@@ -81,7 +81,7 @@ arrow::Result<std::shared_ptr<PartitionWriter>> PartitionWriter::Create(
   }
   return std::make_shared<PartitionWriter>(
       partition_id, capacity, compression_type, last_type, column_type_id, schema,
-      data_file_os, std::move(spilled_file), std::move(buffers),
+      data_file_os, std::move(spilled_file_dir), std::move(buffers),
       std::move(binary_bulders), std::move(large_binary_bulders));
 }
 
@@ -89,7 +89,7 @@ arrow::Status PartitionWriter::Stop() {
   auto start_write = std::chrono::steady_clock::now();
   ARROW_ASSIGN_OR_RAISE(auto before_write, data_file_os_->Tell())
 
-  if (spilled_file_os_ != nullptr) {
+  if (spilled_file_.length() != 0) {
     ARROW_ASSIGN_OR_RAISE(auto spilled_file_is_,
                           arrow::io::ReadableFile::Open(spilled_file_));
     // copy spilled data blocks
@@ -156,7 +156,8 @@ arrow::Status PartitionWriter::Stop() {
 arrow::Status PartitionWriter::Spill() {
   ARROW_ASSIGN_OR_RAISE(auto batch, MakeRecordBatchAndReset());
   if (batch != nullptr) {
-    if (spilled_file_os_ == nullptr) {
+    if (spilled_file_.length() == 0) {
+      ARROW_ASSIGN_OR_RAISE(spilled_file_, CreateTempShuffleFile(spilled_file_dir_));
       ARROW_ASSIGN_OR_RAISE(spilled_file_os_,
                             arrow::io::FileOutputStream::Open(spilled_file_, false));
       ARROW_ASSIGN_OR_RAISE(
