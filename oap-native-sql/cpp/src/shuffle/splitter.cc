@@ -212,8 +212,8 @@ arrow::Status Splitter::Stop() {
 arrow::Result<std::shared_ptr<PartitionWriter>> Splitter::GetPartitionWriter(
     int32_t partition_id) {
   if (partition_writer_[partition_id] == nullptr) {
-    ARROW_ASSIGN_OR_RAISE(auto spilled_file,
-                          CreateSpilledShuffleFile(configured_dirs_[dir_selection_],
+    ARROW_ASSIGN_OR_RAISE(auto spilled_file_dir,
+                          GetSpilledShuffleFileDir(configured_dirs_[dir_selection_],
                                                    sub_dir_selection_[dir_selection_]))
     sub_dir_selection_[dir_selection_] =
         (sub_dir_selection_[dir_selection_] + 1) % options_.num_sub_dirs;
@@ -222,7 +222,7 @@ arrow::Result<std::shared_ptr<PartitionWriter>> Splitter::GetPartitionWriter(
         partition_writer_[partition_id],
         PartitionWriter::Create(partition_id, options_.buffer_size,
                                 options_.compression_type, last_type_id_, column_type_id_,
-                                schema_, data_file_os_, spilled_file));
+                                schema_, data_file_os_, spilled_file_dir));
   }
   return partition_writer_[partition_id];
 }
