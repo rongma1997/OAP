@@ -107,8 +107,8 @@ class PartitionWriter {
                   arrow::Compression::type compression_type, Type::typeId last_type,
                   const std::vector<Type::typeId>& column_type_id,
                   const std::shared_ptr<arrow::Schema>& schema,
-                  const std::shared_ptr<arrow::io::OutputStream>& data_file_os,
-                  const std::shared_ptr<arrow::io::OutputStream>& spilled_file_os,
+                  const std::shared_ptr<arrow::io::FileOutputStream>& data_file_os,
+                  const std::shared_ptr<arrow::io::FileOutputStream>& spilled_file_os,
                   const std::shared_ptr<arrow::io::ReadableFile>& spilled_file_is,
                   TypeBufferInfos buffers, BinaryBuilders binary_builders,
                   LargeBinaryBuilders large_binary_builders)
@@ -130,8 +130,8 @@ class PartitionWriter {
       int32_t partition_id, int64_t capacity, arrow::Compression::type compression_type,
       Type::typeId last_type, const std::vector<Type::typeId>& column_type_id,
       const std::shared_ptr<arrow::Schema>& schema,
-      const std::shared_ptr<arrow::io::OutputStream>& data_file_os,
-      const std::shared_ptr<arrow::io::OutputStream>& spilled_file_os,
+      const std::shared_ptr<arrow::io::FileOutputStream>& data_file_os,
+      const std::shared_ptr<arrow::io::FileOutputStream>& spilled_file_os,
       const std::shared_ptr<arrow::io::ReadableFile>& spilled_file_is);
 
   arrow::Status Stop();
@@ -245,8 +245,8 @@ class PartitionWriter {
   // hold references to splitter
   const std::vector<Type::typeId>& column_type_id_;
   const std::shared_ptr<arrow::Schema>& schema_;
-  const std::shared_ptr<arrow::io::OutputStream>& data_file_os_;
-  const std::shared_ptr<arrow::io::OutputStream>& spilled_file_os_;
+  const std::shared_ptr<arrow::io::FileOutputStream>& data_file_os_;
+  const std::shared_ptr<arrow::io::FileOutputStream>& spilled_file_os_;
   const std::shared_ptr<arrow::io::ReadableFile>& spilled_file_is_;
 
   TypeBufferInfos buffers_;

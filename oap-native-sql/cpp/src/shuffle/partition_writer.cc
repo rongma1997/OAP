@@ -15,9 +15,9 @@
  * limitations under the License.
  */
 
+#include <sys/sendfile.h>
 #include <chrono>
 #include <memory>
-#include <iostream>
 
 #include <arrow/array.h>
 #include <arrow/io/file.h>
@@ -34,8 +34,8 @@ arrow::Result<std::shared_ptr<PartitionWriter>> PartitionWriter::Create(
     int32_t partition_id, int64_t capacity, arrow::Compression::type compression_type,
     Type::typeId last_type, const std::vector<Type::typeId>& column_type_id,
     const std::shared_ptr<arrow::Schema>& schema,
-    const std::shared_ptr<arrow::io::OutputStream>& data_file_os,
-    const std::shared_ptr<arrow::io::OutputStream>& spilled_file_os,
+    const std::shared_ptr<arrow::io::FileOutputStream>& data_file_os,
+    const std::shared_ptr<arrow::io::FileOutputStream>& spilled_file_os,
     const std::shared_ptr<arrow::io::ReadableFile>& spilled_file_is) {
   auto buffers = TypeBufferInfos(Type::NUM_TYPES);
   auto binary_bulders = BinaryBuilders();
@@ -92,10 +92,23 @@ arrow::Status PartitionWriter::Stop() {
 
   if (!spilled_index_.empty()) {
     // copy spilled data blocks
+    auto in_fd = spilled_file_is_->file_descriptor();
+    auto out_fd = data_file_os_->file_descriptor();
     for (const auto& index : spilled_index_) {
-      ARROW_ASSIGN_OR_RAISE(auto buffer,
-                            spilled_file_is_->ReadAt(index.first, index.second));
-      RETURN_NOT_OK(data_file_os_->Write(buffer));
+      auto off = index.first;
+      auto nbytes = index.second;
+      int64_t ret = 0;
+      int64_t bytes_written = 0;
+      while (ret != -1 && bytes_written < nbytes) {
+        ret =
+            static_cast<int64_t>(sendfile64(out_fd, in_fd, &off, nbytes - bytes_written));
+        if (ret != -1) {
+          bytes_written += ret;
+        }
+      }
+      if (ret == -1) {
+        return arrow::internal::IOErrorFromErrno(errno, "Error sendfile");
+      }
     }
     // write last record batch if it's not null
     ARROW_ASSIGN_OR_RAISE(auto batch, MakeRecordBatchAndReset());
