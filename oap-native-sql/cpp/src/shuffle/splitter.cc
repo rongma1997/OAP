@@ -187,7 +187,7 @@ arrow::Status Splitter::Split(const arrow::RecordBatch& rb) {
 arrow::Status Splitter::Stop() {
   // open data file output stream
   ARROW_ASSIGN_OR_RAISE(data_file_os_,
-                        arrow::io::FileOutputStream::Open(options_.data_file, false));
+                        arrow::io::FileOutputStream::Open(options_.data_file, true));
 
   // stop PartitionWriter and collect metrics
   for (const auto& writer : partition_writer_) {
