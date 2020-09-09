@@ -22,7 +22,6 @@
 #include <arrow/io/file.h>
 #include <arrow/ipc/api.h>
 #include <arrow/record_batch.h>
-#include <sys/sendfile.h>
 
 #include "shuffle/partition_writer.h"
 #include "shuffle/utils.h"
@@ -87,33 +86,23 @@ arrow::Result<std::shared_ptr<PartitionWriter>> PartitionWriter::Create(
 
 arrow::Status PartitionWriter::Stop() {
   auto start_write = std::chrono::steady_clock::now();
-  ARROW_ASSIGN_OR_RAISE(auto before_write, data_file_os_->Tell())
+  ARROW_ASSIGN_OR_RAISE(auto before_write, data_file_os_->Tell());
 
   if (spilled_file_.length() != 0) {
-    ARROW_ASSIGN_OR_RAISE(auto spilled_file_is_,
-                          arrow::io::ReadableFile::Open(spilled_file_));
+    ARROW_ASSIGN_OR_RAISE(
+        auto spilled_file_is_,
+        arrow::io::MemoryMappedFile::Open(spilled_file_, arrow::io::FileMode::READ));
     // copy spilled data blocks
-    auto in_fd = spilled_file_is_->file_descriptor();
-    auto out_fd = data_file_os_->file_descriptor();
     ARROW_ASSIGN_OR_RAISE(auto nbytes, spilled_file_is_->GetSize());
-    int64_t off = 0;
-    int64_t ret = 0;
-    int64_t bytes_written = 0;
-    while (ret != -1 && bytes_written < nbytes) {
-      ret = static_cast<int64_t>(sendfile64(out_fd, in_fd, &off, nbytes - bytes_written));
-      if (ret != -1) {
-        bytes_written += ret;
-      }
-    }
+    ARROW_ASSIGN_OR_RAISE(auto buffer, spilled_file_is_->Read(nbytes));
+    RETURN_NOT_OK(data_file_os_->Write(buffer));
+
     // close spilled file streams and delete the file
     RETURN_NOT_OK(spilled_file_os_->Close());
     RETURN_NOT_OK(spilled_file_is_->Close());
     auto fs = std::make_shared<arrow::fs::LocalFileSystem>();
     RETURN_NOT_OK(fs->DeleteFile(spilled_file_));
 
-    if (ret == -1) {
-      return arrow::internal::IOErrorFromErrno(errno, "Error sendfile");
-    }
     // write last record batch if it's not null
     ARROW_ASSIGN_OR_RAISE(auto batch, MakeRecordBatchAndReset());
     if (batch != nullptr) {
@@ -159,7 +148,7 @@ arrow::Status PartitionWriter::Spill() {
     if (spilled_file_.length() == 0) {
       ARROW_ASSIGN_OR_RAISE(spilled_file_, CreateTempShuffleFile(spilled_file_dir_));
       ARROW_ASSIGN_OR_RAISE(spilled_file_os_,
-                            arrow::io::FileOutputStream::Open(spilled_file_, false));
+                            arrow::io::FileOutputStream::Open(spilled_file_, true));
       ARROW_ASSIGN_OR_RAISE(
           spilled_file_writer_,
           arrow::ipc::NewStreamWriter(spilled_file_os_.get(), schema_,
