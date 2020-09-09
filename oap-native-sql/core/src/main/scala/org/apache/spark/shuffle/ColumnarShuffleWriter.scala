@@ -60,6 +60,7 @@ class ColumnarShuffleWriter[K, V](
   private val localDirs = blockManager.diskBlockManager.localDirs.mkString(",")
   private val nativeBufferSize =
     conf.getInt("spark.sql.execution.arrow.maxRecordsPerBatch", 4096)
+  private val transeferToEnabled = conf.getBoolean("spark.file.transferTo", true)
   private val compressionCodec = if (conf.getBoolean("spark.shuffle.compress", true)) {
     conf.get("spark.io.compression.codec", "lz4")
   } else {
@@ -116,8 +117,8 @@ class ColumnarShuffleWriter[K, V](
         jniWrapper.split(nativeSplitter, cb.numRows, bufAddrs.toArray, bufSizes.toArray)
         dep.splitTime.add(System.nanoTime() - startTime)
         dep.numInputRows.add(cb.numRows)
+        writeMetrics.incRecordsWritten(1)
       }
-      writeMetrics.incRecordsWritten(1)
     }
 
     val startTime = System.nanoTime()
@@ -132,6 +133,9 @@ class ColumnarShuffleWriter[K, V](
 
     partitionLengths = splitResult.getPartitionLengths
     try {
+      if (partitionLengths == null) {
+        partitionLengths = writePartitionedFile(dataTmp)
+      }
       shuffleBlockResolver.writeIndexFileAndCommit(
         dep.shuffleId,
         mapId,
@@ -141,6 +145,7 @@ class ColumnarShuffleWriter[K, V](
       if (dataTmp.exists() && !dataTmp.delete()) {
         logError(s"Error while deleting temp file ${dataTmp.getAbsolutePath}")
       }
+
     }
     mapStatus = MapStatus(blockManager.shuffleServerId, partitionLengths, mapId)
   }
@@ -158,12 +163,67 @@ class ColumnarShuffleWriter[K, V](
       }
     } finally {
       if (nativeSplitter != 0) {
-        jniWrapper.close(nativeSplitter)
-        nativeSplitter = 0
+        try {
+          if (splitResult.getSpilledPartitionFileInfo != null) {
+            splitResult.getSpilledPartitionFileInfo.foreach { fileInfo =>
+              val pid = fileInfo.getPartitionId
+              val file = new File(fileInfo.getFilePath)
+              if (file.exists()) {
+                if (!file.delete()) {
+                  logError(s"Unable to delete file for partition ${pid}")
+                }
+              }
+            }
+          }
+        } finally {
+          jniWrapper.close(nativeSplitter)
+          nativeSplitter = 0
+        }
       }
     }
   }
+  @throws[IOException]
+  private def writePartitionedFile(outputFile: File): Array[Long] = {
+    val lengths = new Array[Long](dep.partitioner.numPartitions)
+    val out = new FileOutputStream(outputFile, true)
+    val writerStartTime = System.nanoTime()
+    var threwException = true
 
+    try {
+      splitResult.getSpilledPartitionFileInfo.foreach { fileInfo =>
+        {
+          val pid = fileInfo.getPartitionId
+          val filePath = fileInfo.getFilePath
+
+          val file = new File(filePath)
+          if (file.exists()) {
+            val in = new FileInputStream(file)
+            var copyThrewException = true
+
+            try {
+              lengths(pid) = Utils.copyStream(in, out, false, transeferToEnabled)
+              copyThrewException = false
+            } finally {
+              Closeables.close(in, copyThrewException)
+            }
+            if (!file.delete()) {
+              logError(s"Unable to delete file for partition ${pid}")
+            } else {
+              logDebug(s"Deleting temporary shuffle file ${filePath} for partition ${pid}")
+            }
+          } else {
+            logWarning(
+              s"Native shuffle writer temporary file ${filePath} for partition ${pid} not exists")
+          }
+        }
+      }
+      threwException = false
+    } finally {
+      Closeables.close(out, threwException)
+      writeMetrics.incWriteTime(System.nanoTime - writerStartTime)
+    }
+    lengths
+  }
   @VisibleForTesting
   def getPartitionLengths: Array[Long] = partitionLengths
 

@@ -52,6 +52,7 @@ class ColumnarShuffleWriterSuite extends SharedSparkSession {
   override def sparkConf: SparkConf =
     super.sparkConf
       .setAppName("test ColumnarShuffleWriter")
+      .set("spark.file.transferTo", "true")
       .set("spark.shuffle.manager", "org.apache.spark.shuffle.sort.ColumnarShuffleManager")
       .set("spark.sql.execution.arrow.maxRecordsPerBatch", "4096")
 

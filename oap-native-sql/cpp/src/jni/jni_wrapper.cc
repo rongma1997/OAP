@@ -54,6 +54,9 @@ static jmethodID arrowbuf_builder_constructor;
 static jclass split_result_class;
 static jmethodID split_result_constructor;
 
+static jclass spilled_partition_file_info_class;
+static jmethodID spilled_partition_file_info_constructor;
+
 using arrow::jni::ConcurrentMap;
 static ConcurrentMap<std::shared_ptr<arrow::Buffer>> buffer_holder_;
 
@@ -194,9 +197,16 @@ jint JNI_OnLoad(JavaVM* vm, void* reserved) {
   arrowbuf_builder_constructor =
       GetMethodID(env, arrowbuf_builder_class, "<init>", "(JJIJ)V");
 
+  spilled_partition_file_info_class = CreateGlobalClassReference(
+      env, "Lcom/intel/oap/vectorized/SpilledPartitionFileInfo;");
+  spilled_partition_file_info_constructor = GetMethodID(
+      env, spilled_partition_file_info_class, "<init>", "(ILjava/lang/String;)V");
+
   split_result_class =
       CreateGlobalClassReference(env, "Lcom/intel/oap/vectorized/SplitResult;");
-  split_result_constructor = GetMethodID(env, split_result_class, "<init>", "(JJJJ[J)V");
+  split_result_constructor =
+      GetMethodID(env, split_result_class, "<init>",
+                  "(JJJJ[J[Lcom/intel/oap/vectorized/SpilledPartitionFileInfo;)V");
 
   return JNI_VERSION;
 }
@@ -215,6 +225,7 @@ void JNI_OnUnload(JavaVM* vm, void* reserved) {
   env->DeleteGlobalRef(arrowbuf_builder_class);
   env->DeleteGlobalRef(arrow_record_batch_builder_class);
   env->DeleteGlobalRef(split_result_class);
+  env->DeleteGlobalRef(spilled_partition_file_info_class);
 
   buffer_holder_.Clear();
   handler_holder_.Clear();
@@ -1265,15 +1276,33 @@ JNIEXPORT jobject JNICALL Java_com_intel_oap_vectorized_ShuffleSplitterJniWrappe
     return nullptr;
   }
 
-  const auto& partition_length = splitter->PartitionLengths();
-  auto partition_length_arr = env->NewLongArray(partition_length.size());
-  auto src = reinterpret_cast<const jlong*>(partition_length.data());
-  env->SetLongArrayRegion(partition_length_arr, 0, partition_length.size(), src);
+  jlongArray partition_length_arr = NULL;
+  jobjectArray partition_file_info_arr = NULL;
+  if (splitter->is_spilled()) {
+    // spilled partition file infos
+    const auto& spilled_partition_file_info = splitter->SpilledPartitionFileInfo();
+    auto valid_num_partitions = spilled_partition_file_info.size();
+    partition_file_info_arr = env->NewObjectArray(
+        valid_num_partitions, spilled_partition_file_info_class, nullptr);
+
+    for (auto i = 0; i < valid_num_partitions; ++i) {
+      jobject file_info_obj = env->NewObject(
+          spilled_partition_file_info_class, spilled_partition_file_info_constructor,
+          spilled_partition_file_info[i].first,
+          env->NewStringUTF(spilled_partition_file_info[i].second.c_str()));
+      env->SetObjectArrayElement(partition_file_info_arr, i, file_info_obj);
+    }
+  } else {
+    // no spill, get partition lengths
+    const auto& partition_length = splitter->PartitionLengths();
+    partition_length_arr = env->NewLongArray(partition_length.size());
+    auto src = reinterpret_cast<const jlong*>(partition_length.data());
+    env->SetLongArrayRegion(partition_length_arr, 0, partition_length.size(), src);
+  }
   jobject split_result = env->NewObject(
       split_result_class, split_result_constructor, splitter->TotalComputePidTime(),
       splitter->TotalWriteTime(), splitter->TotalSpillTime(),
-      splitter->TotalBytesWritten(), partition_length_arr);
-
+      splitter->TotalBytesWritten(), partition_length_arr, partition_file_info_arr);
   return split_result;
 }
 

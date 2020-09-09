@@ -37,11 +37,9 @@ static std::string GenerateUUID() {
 
 static arrow::Result<std::string> GetSpilledShuffleFileDir(
     const std::string& configured_dir, int32_t sub_dir_id) {
-  auto fs = std::make_shared<arrow::fs::LocalFileSystem>();
   std::stringstream ss;
   ss << std::setfill('0') << std::setw(2) << std::hex << sub_dir_id;
   auto dir = arrow::fs::internal::ConcatAbstractPath(configured_dir, ss.str());
-  RETURN_NOT_OK(fs->CreateDir(dir));
   return dir;
 }
 

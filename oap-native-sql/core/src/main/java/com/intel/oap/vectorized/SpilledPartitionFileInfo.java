@@ -17,12 +17,12 @@
 
 package com.intel.oap.vectorized;
 
-/** POJO to hold the output file path of the designated partition id */
-public class PartitionFileInfo {
+/** POJO to hold the spilled file path of the designated partition id */
+public class SpilledPartitionFileInfo {
   private final int partitionId;
   private final String filePath;
 
-  public PartitionFileInfo(int partitionId, String filePath) {
+  public SpilledPartitionFileInfo(int partitionId, String filePath) {
     this.partitionId = partitionId;
     this.filePath = filePath;
   }

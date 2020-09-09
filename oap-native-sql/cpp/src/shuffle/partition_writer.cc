@@ -35,7 +35,7 @@ arrow::Result<std::shared_ptr<PartitionWriter>> PartitionWriter::Create(
     Type::typeId last_type, const std::vector<Type::typeId>& column_type_id,
     const std::shared_ptr<arrow::Schema>& schema,
     const std::shared_ptr<arrow::io::FileOutputStream>& data_file_os,
-    std::string spilled_file_dir) {
+    std::string spilled_file_dir, bool* is_spilled) {
   auto buffers = TypeBufferInfos(Type::NUM_TYPES);
   auto binary_bulders = BinaryBuilders();
   auto large_binary_bulders = LargeBinaryBuilders();
@@ -81,53 +81,26 @@ arrow::Result<std::shared_ptr<PartitionWriter>> PartitionWriter::Create(
   }
   return std::make_shared<PartitionWriter>(
       partition_id, capacity, compression_type, last_type, column_type_id, schema,
-      data_file_os, std::move(spilled_file_dir), std::move(buffers),
+      data_file_os, std::move(spilled_file_dir), is_spilled, std::move(buffers),
       std::move(binary_bulders), std::move(large_binary_bulders));
 }
 
 arrow::Status PartitionWriter::Stop() {
-  auto start_write = std::chrono::steady_clock::now();
-  ARROW_ASSIGN_OR_RAISE(auto before_write, data_file_os_->Tell())
-
-  if (spilled_file_.length() != 0) {
-    ARROW_ASSIGN_OR_RAISE(auto spilled_file_is_,
-                          arrow::io::ReadableFile::Open(spilled_file_));
-    // copy spilled data blocks
-    auto in_fd = spilled_file_is_->file_descriptor();
-    auto out_fd = data_file_os_->file_descriptor();
-    ARROW_ASSIGN_OR_RAISE(auto nbytes, spilled_file_is_->GetSize());
-    int64_t off = 0;
-    int64_t ret = 0;
-    int64_t bytes_written = 0;
-    while (ret != -1 && bytes_written < nbytes) {
-      ret = static_cast<int64_t>(sendfile64(out_fd, in_fd, &off, nbytes - bytes_written));
-      if (ret != -1) {
-        bytes_written += ret;
-      }
-    }
-    // close spilled file streams and delete the file
-    RETURN_NOT_OK(spilled_file_os_->Close());
-    RETURN_NOT_OK(spilled_file_is_->Close());
-    auto fs = std::make_shared<arrow::fs::LocalFileSystem>();
-    RETURN_NOT_OK(fs->DeleteFile(spilled_file_));
-
-    if (ret == -1) {
-      return arrow::internal::IOErrorFromErrno(errno, "Error sendfile");
-    }
-    // write last record batch if it's not null
-    ARROW_ASSIGN_OR_RAISE(auto batch, MakeRecordBatchAndReset());
-    if (batch != nullptr) {
-      int32_t metadata_length;
-      int64_t body_length;
-      RETURN_NOT_OK(arrow::ipc::WriteRecordBatch(
-          *batch, 0, data_file_os_.get(), &metadata_length, &body_length,
-          SplitterIpcWriteOptions(compression_type_)));
-    }
+  if (*is_spilled_) {
+    auto start_spill = std::chrono::steady_clock::now();
+    RETURN_NOT_OK(Spill());
     // write EOS
-    constexpr int32_t kZeroLength = 0;
-    RETURN_NOT_OK(data_file_os_->Write(&kIpcContinuationToken, sizeof(int32_t)));
-    RETURN_NOT_OK(data_file_os_->Write(&kZeroLength, sizeof(int32_t)));
+    RETURN_NOT_OK(spilled_file_writer_->Close());
+    ARROW_ASSIGN_OR_RAISE(auto bytes_written, spilled_file_os_->Tell());
+    RETURN_NOT_OK(spilled_file_os_->Close());
+    partition_length_ += bytes_written;
+    auto end_spill = std::chrono::steady_clock::now();
+    spill_time_ +=
+        std::chrono::duration_cast<std::chrono::nanoseconds>(end_spill - start_spill)
+            .count();
   } else {
+    auto start_write = std::chrono::steady_clock::now();
+    ARROW_ASSIGN_OR_RAISE(auto before_write, data_file_os_->Tell())
     ARROW_ASSIGN_OR_RAISE(
         auto data_file_writer,
         arrow::ipc::NewStreamWriter(data_file_os_.get(), schema_,
@@ -140,16 +113,13 @@ arrow::Status PartitionWriter::Stop() {
     RETURN_NOT_OK(data_file_writer->WriteRecordBatch(*batch));
     // write EOS
     RETURN_NOT_OK(data_file_writer->Close());
+    ARROW_ASSIGN_OR_RAISE(auto after_write, data_file_os_->Tell());
+    partition_length_ = after_write - before_write;
+    auto end_write = std::chrono::steady_clock::now();
+    write_time_ +=
+        std::chrono::duration_cast<std::chrono::nanoseconds>(end_write - start_write)
+            .count();
   }
-
-  ARROW_ASSIGN_OR_RAISE(auto after_write, data_file_os_->Tell());
-  partition_length_ = after_write - before_write;
-
-  auto end_write = std::chrono::steady_clock::now();
-  write_time_ +=
-      std::chrono::duration_cast<std::chrono::nanoseconds>(end_write - start_write)
-          .count();
-
   return arrow::Status::OK();
 }
 
@@ -166,6 +136,7 @@ arrow::Status PartitionWriter::Spill() {
                                       SplitterIpcWriteOptions(compression_type_)))
     }
     RETURN_NOT_OK(spilled_file_writer_->WriteRecordBatch(*batch));
+    *is_spilled_ = true;
   }
   return arrow::Status::OK();
 }

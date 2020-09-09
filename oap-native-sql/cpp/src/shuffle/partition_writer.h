@@ -108,8 +108,8 @@ class PartitionWriter {
                   const std::vector<Type::typeId>& column_type_id,
                   const std::shared_ptr<arrow::Schema>& schema,
                   const std::shared_ptr<arrow::io::FileOutputStream>& data_file_os,
-                  std::string spilled_file_dir, TypeBufferInfos buffers,
-                  BinaryBuilders binary_builders,
+                  std::string spilled_file_dir, bool* is_spilled,
+                  TypeBufferInfos buffers, BinaryBuilders binary_builders,
                   LargeBinaryBuilders large_binary_builders)
       : partition_id_(partition_id),
         capacity_(capacity),
@@ -119,6 +119,7 @@ class PartitionWriter {
         schema_(schema),
         data_file_os_(data_file_os),
         spilled_file_dir_(std::move(spilled_file_dir)),
+        is_spilled_(is_spilled),
         buffers_(std::move(buffers)),
         binary_builders_(std::move(binary_builders)),
         large_binary_builders_(std::move(large_binary_builders)),
@@ -129,7 +130,7 @@ class PartitionWriter {
       Type::typeId last_type, const std::vector<Type::typeId>& column_type_id,
       const std::shared_ptr<arrow::Schema>& schema,
       const std::shared_ptr<arrow::io::FileOutputStream>& data_file_os,
-      std::string spilled_file_dir);
+      std::string spilled_file_dir, bool* is_spilled);
 
   arrow::Status Stop();
 
@@ -138,6 +139,8 @@ class PartitionWriter {
   int64_t GetSpillTime() const { return spill_time_; }
 
   int64_t GetPartitionLength() const { return partition_length_; }
+
+  const std::string& GetSpilledFile() const { return spilled_file_; }
 
   arrow::Result<bool> inline CheckTypeWriteEnds(const Type::typeId& type_id) {
     if (write_offset_[type_id] == capacity_) {
@@ -260,6 +263,8 @@ class PartitionWriter {
   std::string spilled_file_;
   std::shared_ptr<arrow::io::FileOutputStream> spilled_file_os_;
   std::shared_ptr<arrow::ipc::RecordBatchWriter> spilled_file_writer_;
+
+  bool* is_spilled_;
 };
 
 }  // namespace shuffle

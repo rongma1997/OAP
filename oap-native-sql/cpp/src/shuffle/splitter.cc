@@ -185,29 +185,35 @@ arrow::Status Splitter::Split(const arrow::RecordBatch& rb) {
 }
 
 arrow::Status Splitter::Stop() {
-  // open data file output stream
-  ARROW_ASSIGN_OR_RAISE(data_file_os_,
-                        arrow::io::FileOutputStream::Open(options_.data_file, false));
-
-  // stop PartitionWriter and collect metrics
-  for (const auto& writer : partition_writer_) {
-    if (writer != nullptr) {
-      RETURN_NOT_OK(writer->Stop());
-      auto length = writer->GetPartitionLength();
-      partition_lengths_.push_back(length);
-      total_bytes_written_ += length;
-      total_write_time_ += writer->GetWriteTime();
-      total_spill_time_ += writer->GetSpillTime();
-    } else {
-      partition_lengths_.push_back(0);
+  if (is_spilled_) {
+    int32_t pid = 0;
+    for (const auto& writer : partition_writer_) {
+      if (writer != nullptr) {
+        RETURN_NOT_OK(writer->Stop());
+        total_spill_time_ += writer->GetSpillTime();
+        total_bytes_written_ += writer->GetPartitionLength();
+        spilled_partition_file_info_.emplace_back(pid, writer->GetSpilledFile());
+      }
+      ++pid;
     }
+  } else {
+    ARROW_ASSIGN_OR_RAISE(data_file_os_,
+                          arrow::io::FileOutputStream::Open(options_.data_file, false));
+    for (const auto& writer : partition_writer_) {
+      if (writer != nullptr) {
+        RETURN_NOT_OK(writer->Stop());
+        total_write_time_ += writer->GetWriteTime();
+        auto length = writer->GetPartitionLength();
+        total_bytes_written_ += length;
+        partition_lengths_.push_back(length);
+      } else {
+        partition_lengths_.push_back(0);
+      }
+    }
+    RETURN_NOT_OK(data_file_os_->Close());
   }
-
-  // close data file output Stream
-  RETURN_NOT_OK(data_file_os_->Close());
-
   return arrow::Status::OK();
-}
+}  // namespace shuffle
 
 arrow::Result<std::shared_ptr<PartitionWriter>> Splitter::GetPartitionWriter(
     int32_t partition_id) {
@@ -222,7 +228,8 @@ arrow::Result<std::shared_ptr<PartitionWriter>> Splitter::GetPartitionWriter(
         partition_writer_[partition_id],
         PartitionWriter::Create(partition_id, options_.buffer_size,
                                 options_.compression_type, last_type_id_, column_type_id_,
-                                schema_, data_file_os_, spilled_file_dir));
+                                schema_, data_file_os_, spilled_file_dir,
+                                &is_spilled_));
   }
   return partition_writer_[partition_id];
 }

@@ -60,8 +60,7 @@ class Splitter {
 
   /***
    * Stop all writers created by this splitter. If the data buffer managed by the writer
-   * is not empty, write to output stream as RecordBatch. Then sort the temporary files by
-   * partition id.
+   * is not empty, write to output stream as RecordBatch.
    * @return
    */
   arrow::Status Stop();
@@ -74,7 +73,13 @@ class Splitter {
 
   int64_t TotalComputePidTime() const { return total_compute_pid_time_; }
 
+  bool is_spilled() const { return is_spilled_; }
+
   const std::vector<int64_t>& PartitionLengths() const { return partition_lengths_; }
+
+  const std::vector<std::pair<int32_t, std::string>> SpilledPartitionFileInfo() const {
+    return spilled_partition_file_info_;
+  }
 
   // for testing
   const std::string& DataFile() const { return options_.data_file; }
@@ -106,6 +111,7 @@ class Splitter {
   int64_t total_spill_time_ = 0;
   int64_t total_compute_pid_time_ = 0;
   std::vector<int64_t> partition_lengths_;
+  std::vector<std::pair<int32_t, std::string>> spilled_partition_file_info_;
 
   // partition writer and parameters
   std::vector<std::shared_ptr<PartitionWriter>> partition_writer_;
@@ -118,6 +124,7 @@ class Splitter {
   std::vector<std::string> configured_dirs_;
 
   std::shared_ptr<arrow::io::FileOutputStream> data_file_os_;
+  bool is_spilled_ = false;
 };
 
 class RoundRobinSplitter : public Splitter {
