@@ -127,8 +127,9 @@ class ColumnarShuffleWriter[K, V](
       .nanoTime() - startTime - splitResult.getTotalSpillTime - splitResult.getTotalWriteTime - splitResult.getTotalComputePidTime)
     dep.spillTime.add(splitResult.getTotalSpillTime)
     dep.computePidTime.add(splitResult.getTotalComputePidTime)
+    dep.bytesSpilled.add(splitResult.getTotalBytesSpilled)
     writeMetrics.incBytesWritten(splitResult.getTotalBytesWritten)
-    writeMetrics.incWriteTime(splitResult.getTotalWriteTime)
+    writeMetrics.incWriteTime(splitResult.getTotalWriteTime + splitResult.getTotalSpillTime)
 
     partitionLengths = splitResult.getPartitionLengths
     try {

@@ -196,7 +196,7 @@ jint JNI_OnLoad(JavaVM* vm, void* reserved) {
 
   split_result_class =
       CreateGlobalClassReference(env, "Lcom/intel/oap/vectorized/SplitResult;");
-  split_result_constructor = GetMethodID(env, split_result_class, "<init>", "(JJJJ[J)V");
+  split_result_constructor = GetMethodID(env, split_result_class, "<init>", "(JJJJJ[J)V");
 
   return JNI_VERSION;
 }
@@ -1272,7 +1272,7 @@ JNIEXPORT jobject JNICALL Java_com_intel_oap_vectorized_ShuffleSplitterJniWrappe
   jobject split_result = env->NewObject(
       split_result_class, split_result_constructor, splitter->TotalComputePidTime(),
       splitter->TotalWriteTime(), splitter->TotalSpillTime(),
-      splitter->TotalBytesWritten(), partition_length_arr);
+      splitter->TotalBytesWritten(), splitter->TotalBytesSpilled(), partition_length_arr);
 
   return split_result;
 }

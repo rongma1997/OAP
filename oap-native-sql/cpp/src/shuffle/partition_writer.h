@@ -139,6 +139,8 @@ class PartitionWriter {
 
   int64_t GetPartitionLength() const { return partition_length_; }
 
+  int64_t GetBytesSpilled() const { return bytes_spilled_; }
+
   arrow::Result<bool> inline CheckTypeWriteEnds(const Type::typeId& type_id) {
     if (write_offset_[type_id] == capacity_) {
       if (type_id == last_type_) {
@@ -256,6 +258,7 @@ class PartitionWriter {
   int64_t write_time_ = 0;
   int64_t spill_time_ = 0;
   int64_t partition_length_ = 0;
+  int64_t bytes_spilled_ = 0;
 
   std::string spilled_file_;
   std::shared_ptr<arrow::io::FileOutputStream> spilled_file_os_;
