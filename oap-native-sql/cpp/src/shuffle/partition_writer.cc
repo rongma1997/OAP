@@ -102,6 +102,7 @@ arrow::Status PartitionWriter::Stop() {
     RETURN_NOT_OK(spilled_file_is_->Close());
     auto fs = std::make_shared<arrow::fs::LocalFileSystem>();
     RETURN_NOT_OK(fs->DeleteFile(spilled_file_));
+    bytes_spilled_ += nbytes;
 
     // write last record batch if it's not null
     ARROW_ASSIGN_OR_RAISE(auto batch, MakeRecordBatchAndReset());

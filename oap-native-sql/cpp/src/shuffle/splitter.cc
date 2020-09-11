@@ -199,6 +199,7 @@ arrow::Status Splitter::Stop() {
       auto length = writer->GetPartitionLength();
       partition_lengths_.push_back(length);
       total_bytes_written_ += length;
+      total_bytes_spilled_ += writer->GetBytesSpilled();
       total_write_time_ += writer->GetWriteTime();
       total_spill_time_ += writer->GetSpillTime();
     } else {

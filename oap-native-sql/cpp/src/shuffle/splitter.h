@@ -68,6 +68,8 @@ class Splitter {
 
   int64_t TotalBytesWritten() const { return total_bytes_written_; }
 
+  int64_t TotalBytesSpilled() const { return total_bytes_spilled_; }
+
   int64_t TotalWriteTime() const { return total_write_time_; }
 
   int64_t TotalSpillTime() const { return total_spill_time_; }
@@ -101,6 +103,7 @@ class Splitter {
   SplitOptions options_;
 
   int64_t total_bytes_written_ = 0;
+  int64_t total_bytes_spilled_= 0;
   int64_t total_write_time_ = 0;
   int64_t total_spill_time_ = 0;
   int64_t total_compute_pid_time_ = 0;

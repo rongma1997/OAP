@@ -70,9 +70,10 @@ class ColumnarShuffleExchangeExec(
     SQLShuffleReadMetricsReporter.createShuffleReadMetrics(sparkContext)
   override lazy val metrics: Map[String, SQLMetric] = Map(
     "dataSize" -> SQLMetrics.createSizeMetric(sparkContext, "data size"),
+    "bytesSpilled" -> SQLMetrics.createSizeMetric(sparkContext, "shuffle bytes spilled"),
     "computePidTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "totaltime_computepid"),
     "splitTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "totaltime_split"),
-    "spillTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "totaltime_spill"),
+    "spillTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "shuffle spill time"),
     "avgReadBatchNumRows" -> SQLMetrics
       .createAverageMetric(sparkContext, "avg read batch num rows"),
     "numInputRows" -> SQLMetrics.createMetric(sparkContext, "number of input rows"),
@@ -112,6 +113,7 @@ class ColumnarShuffleExchangeExec(
       serializer,
       writeMetrics,
       longMetric("dataSize"),
+      longMetric("bytesSpilled"),
       longMetric("numInputRows"),
       longMetric("computePidTime"),
       longMetric("splitTime"),
@@ -174,6 +176,7 @@ object ColumnarShuffleExchangeExec extends Logging {
       serializer: Serializer,
       writeMetrics: Map[String, SQLMetric],
       dataSize: SQLMetric,
+      bytesSpilled: SQLMetric,
       numInputRows: SQLMetric,
       computePidTime: SQLMetric,
       splitTime: SQLMetric,
@@ -326,6 +329,7 @@ object ColumnarShuffleExchangeExec extends Logging {
         shuffleWriterProcessor = createShuffleWriteProcessor(writeMetrics),
         nativePartitioning = nativePartitioning,
         dataSize = dataSize,
+        bytesSpilled = bytesSpilled,
         numInputRows = numInputRows,
         computePidTime = computePidTime,
         splitTime = splitTime,

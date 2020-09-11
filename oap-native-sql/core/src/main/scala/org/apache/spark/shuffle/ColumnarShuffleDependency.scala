@@ -41,6 +41,7 @@ import scala.reflect.ClassTag
  * @param shuffleWriterProcessor the processor to control the write behavior in ShuffleMapTask
  * @param nativePartitioning     hold partitioning parameters needed by native splitter
  * @param dataSize for shuffle data size tracking
+ * @param bytesSpilled for shuffle spill size tracking
  * @param computePidTime partition id computation time metric
  * @param splitTime native split time metric
  */
@@ -54,6 +55,7 @@ class ColumnarShuffleDependency[K: ClassTag, V: ClassTag, C: ClassTag](
     override val shuffleWriterProcessor: ShuffleWriteProcessor = new ShuffleWriteProcessor,
     val nativePartitioning: NativePartitioning,
     val dataSize: SQLMetric,
+    val bytesSpilled: SQLMetric,
     val numInputRows: SQLMetric,
     val computePidTime: SQLMetric,
     val splitTime: SQLMetric,
