@@ -88,14 +88,13 @@ class Splitter {
 
   virtual arrow::Status Init();
 
-  virtual arrow::Result<std::vector<std::shared_ptr<PartitionWriter>>>
-  GetNextBatchPartitionWriter(const arrow::RecordBatch& rb) = 0;
+  virtual arrow::Result<std::vector<int32_t>> GetNextBatchPartitionWriterIndex(
+      const arrow::RecordBatch& rb) = 0;
 
   arrow::Status DoSplit(const arrow::RecordBatch& rb,
-                        std::vector<std::shared_ptr<PartitionWriter>> writer_idx);
+                        const std::vector<int32_t>& writer_idx);
 
-  arrow::Result<std::shared_ptr<PartitionWriter>> GetPartitionWriter(
-      int32_t partition_id);
+  arrow::Status CreatePartitionWriter(int32_t partition_id);
 
   int32_t num_partitions_;
   std::shared_ptr<arrow::Schema> schema_;
@@ -127,8 +126,8 @@ class RoundRobinSplitter : public Splitter {
       SplitOptions options);
 
  protected:
-  arrow::Result<std::vector<std::shared_ptr<PartitionWriter>>>
-  GetNextBatchPartitionWriter(const arrow::RecordBatch& rb) override;
+  arrow::Result<std::vector<int32_t>> GetNextBatchPartitionWriterIndex(
+      const arrow::RecordBatch& rb) override;
 
  private:
   RoundRobinSplitter(int32_t num_partitions, std::shared_ptr<arrow::Schema> schema,
@@ -151,8 +150,8 @@ class HashSplitter : public Splitter {
 
   arrow::Status CreateProjector(const gandiva::ExpressionVector& expr_vector);
 
-  arrow::Result<std::vector<std::shared_ptr<PartitionWriter>>>
-  GetNextBatchPartitionWriter(const arrow::RecordBatch& rb) override;
+  arrow::Result<std::vector<int32_t>> GetNextBatchPartitionWriterIndex(
+      const arrow::RecordBatch& rb) override;
 
   std::shared_ptr<gandiva::Projector> projector_;
 };
@@ -174,8 +173,8 @@ class FallbackRangeSplitter : public Splitter {
 
   arrow::Status Init() override;
 
-  arrow::Result<std::vector<std::shared_ptr<PartitionWriter>>>
-  GetNextBatchPartitionWriter(const arrow::RecordBatch& rb) override;
+  arrow::Result<std::vector<int32_t>> GetNextBatchPartitionWriterIndex(
+      const arrow::RecordBatch& rb) override;
 
   std::shared_ptr<arrow::Schema> input_schema_;
 };

@@ -41,7 +41,6 @@ static arrow::Result<std::string> GetSpilledShuffleFileDir(
   std::stringstream ss;
   ss << std::setfill('0') << std::setw(2) << std::hex << sub_dir_id;
   auto dir = arrow::fs::internal::ConcatAbstractPath(configured_dir, ss.str());
-  RETURN_NOT_OK(fs->CreateDir(dir));
   return dir;
 }
 
