@@ -43,8 +43,8 @@ class BenchmarkShuffleSplit : public ::testing::TestWithParam<std::tuple<int, in
 #else
     std::string dir_path = "";
 #endif
-	dir_path = "hdfs://sr247:8020/user/sparkuser/";
-    std::string path = dir_path + "small_lineitem_672.parquet/part-00000-5d3e55f3-44ae-4932-8559-88290a359ec9-c000.snappy.parquet";
+    std::string path = "hdfs://sr247:8020/user/sparkuser/small_lineitem_112p/part-00000-8a8cee5f-c4d9-4197-8895-9d43f9f0cfb3-c000.snappy.parquet";
+	std::cout << "Input file: " + path << std::endl;
     std::shared_ptr<arrow::fs::FileSystem> fs;
     std::string file_name;
     ARROW_ASSIGN_OR_THROW(fs, arrow::fs::FileSystemFromUriOrPath(path, &file_name))
@@ -106,35 +106,32 @@ class BenchmarkShuffleSplit : public ::testing::TestWithParam<std::tuple<int, in
   std::shared_ptr<Splitter> splitter;
 
   void DoSplit(arrow::Compression::type compression_type) {
-    int num_pid = std::get<0>(GetParam());
+    int num_partitions = std::get<0>(GetParam());
     int buffer_size = std::get<1>(GetParam());
 
-    auto start = std::chrono::steady_clock::now();
 
     auto options = SplitOptions::Defaults();
     options.compression_type = compression_type;
     options.buffer_size = buffer_size;
-    ARROW_ASSIGN_OR_THROW(splitter, Splitter::Make("hash", schema, num_pid, expr_vector,
+    ARROW_ASSIGN_OR_THROW(splitter, Splitter::Make("hash", schema, num_partitions, expr_vector,
                                                    std::move(options)));
 
     std::shared_ptr<arrow::RecordBatch> record_batch;
     uint64_t elapse_read = 0;
     uint64_t num_batches = 0;
+	int64_t split_time = 0;
 
     do {
       TIME_NANO_OR_THROW(elapse_read, record_batch_reader->ReadNext(&record_batch));
       if (record_batch) {
-        ASSERT_NOT_OK(splitter->Split(*record_batch));
+        TIME_NANO_OR_THROW(split_time, splitter->Split(*record_batch));
         num_batches += 1;
       }
     } while (record_batch);
 
     ASSERT_NOT_OK(splitter->Stop());
-    auto end = std::chrono::steady_clock::now();
-    auto total_time =
-        std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
 
-    std::cout << "Setting num_pid to " << num_pid << ", buffer_size to " << buffer_size
+    std::cout << "Setting num_partitions to " << num_partitions << ", buffer_size to " << buffer_size
               << std::endl;
     std::cout << "Total batches read:  " << num_batches << std::endl;
 
@@ -150,8 +147,7 @@ class BenchmarkShuffleSplit : public ::testing::TestWithParam<std::tuple<int, in
     auto compute_pid_time = splitter->TotalComputePidTime();
     auto write_time = splitter->TotalWriteTime();
     auto spill_time = splitter->TotalSpillTime();
-    auto split_time =
-        total_time - elapse_read - compute_pid_time - spill_time - write_time;
+    split_time = split_time - spill_time - compute_pid_time;
     std::cout << "Took " << TIME_NANO_TO_STRING(elapse_read) << " to read data"
               << std::endl
               << "Took " << TIME_NANO_TO_STRING(compute_pid_time) << " to compute pid"
