@@ -43,7 +43,7 @@ class BenchmarkShuffleSplit : public ::testing::TestWithParam<std::tuple<int, in
 #else
     std::string dir_path = "";
 #endif
-    std::string path = "hdfs://sr247:8020/user/sparkuser/small_lineitem_112p/part-00000-8a8cee5f-c4d9-4197-8895-9d43f9f0cfb3-c000.snappy.parquet";
+    std::string path = "hdfs://sr247:8020/user/sparkuser/small_lineitem_336p/part-00000-3f4314ce-0a80-4bca-b497-bb10c0fbf9f5-c000.snappy.parquet";
 	std::cout << "Input file: " + path << std::endl;
     std::shared_ptr<arrow::fs::FileSystem> fs;
     std::string file_name;
@@ -117,8 +117,9 @@ class BenchmarkShuffleSplit : public ::testing::TestWithParam<std::tuple<int, in
                                                    std::move(options)));
 
     std::shared_ptr<arrow::RecordBatch> record_batch;
-    uint64_t elapse_read = 0;
-    uint64_t num_batches = 0;
+    int64_t elapse_read = 0;
+    int64_t num_batches = 0;
+	int64_t num_rows = 0;
 	int64_t split_time = 0;
 
     do {
@@ -126,6 +127,7 @@ class BenchmarkShuffleSplit : public ::testing::TestWithParam<std::tuple<int, in
       if (record_batch) {
         TIME_NANO_OR_THROW(split_time, splitter->Split(*record_batch));
         num_batches += 1;
+		num_rows += record_batch->num_rows();
       }
     } while (record_batch);
 
@@ -133,7 +135,7 @@ class BenchmarkShuffleSplit : public ::testing::TestWithParam<std::tuple<int, in
 
     std::cout << "Setting num_partitions to " << num_partitions << ", buffer_size to " << buffer_size
               << std::endl;
-    std::cout << "Total batches read:  " << num_batches << std::endl;
+    std::cout << "Total batches read:  " << num_batches << ", total rows: " << num_rows << std::endl;
 
 #define BYTES_TO_STRING(bytes) \
 	(bytes > 1 << 20 ? (bytes * 1.0 / (1 << 20)) : (bytes > 1 << 10 ? (bytes * 1.0 / (1 << 10)) : bytes)) << \
