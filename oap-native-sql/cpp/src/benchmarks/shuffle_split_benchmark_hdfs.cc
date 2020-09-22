@@ -34,25 +34,26 @@
 namespace sparkcolumnarplugin {
 namespace shuffle {
 
-class BenchmarkShuffleSplit : public ::testing::TestWithParam<std::tuple<int, int>> {
+std::string input_file;
+const int num_partitions = 336;
+const int buffer_size = 20480;
+
+class BenchmarkShuffleSplit : public ::testing::Test {
  public:
   void SetUp() override {
     // read input from parquet file
-#ifdef BENCHMARK_FILE_PATH
-    std::string dir_path = BENCHMARK_FILE_PATH;
-#else
-    std::string dir_path = "";
-#endif
-    std::string path = "hdfs://sr247:8020/user/sparkuser/small_lineitem_336p/part-00000-3f4314ce-0a80-4bca-b497-bb10c0fbf9f5-c000.snappy.parquet";
-	std::cout << "Input file: " + path << std::endl;
+	if (input_file.length() == 0) {
+		input_file = "hdfs://sr247:8020/user/sparkuser/small_lineitem_336p/part-00000-3f4314ce-0a80-4bca-b497-bb10c0fbf9f5-c000.snappy.parquet";
+	}
+	std::cout << "Input file: " + input_file << std::endl;
     std::shared_ptr<arrow::fs::FileSystem> fs;
     std::string file_name;
-    ARROW_ASSIGN_OR_THROW(fs, arrow::fs::FileSystemFromUriOrPath(path, &file_name))
+    ARROW_ASSIGN_OR_THROW(fs, arrow::fs::FileSystemFromUriOrPath(input_file, &file_name))
 
     ARROW_ASSIGN_OR_THROW(file, fs->OpenInputFile(file_name));
 
     parquet::ArrowReaderProperties properties(true);
-    properties.set_batch_size(20480);
+    properties.set_batch_size(buffer_size);
 
     ASSERT_NOT_OK(::parquet::arrow::FileReader::Make(
         arrow::default_memory_pool(), ::parquet::ParquetFileReader::Open(file),
@@ -106,10 +107,6 @@ class BenchmarkShuffleSplit : public ::testing::TestWithParam<std::tuple<int, in
   std::shared_ptr<Splitter> splitter;
 
   void DoSplit(arrow::Compression::type compression_type) {
-    int num_partitions = std::get<0>(GetParam());
-    int buffer_size = std::get<1>(GetParam());
-
-
     auto options = SplitOptions::Defaults();
     options.compression_type = compression_type;
     options.buffer_size = buffer_size;
@@ -161,12 +158,16 @@ class BenchmarkShuffleSplit : public ::testing::TestWithParam<std::tuple<int, in
   }
 };
 
-TEST_P(BenchmarkShuffleSplit, LZ4) { DoSplit(arrow::Compression::LZ4_FRAME); }
-
-// TEST_P(BenchmarkShuffleSplit, Uncompressed) { DoSplit(arrow::Compression::UNCOMPRESSED); }
-
-INSTANTIATE_TEST_CASE_P(ShuffleSplit, BenchmarkShuffleSplit,
-                        ::testing::Values(std::make_tuple(336, 20480)));
+TEST_F(BenchmarkShuffleSplit, LZ4) { DoSplit(arrow::Compression::LZ4_FRAME); }
 
 }  // namespace shuffle
 }  // namespace sparkcolumnarplugin
+
+int main(int argc, char** argv) {
+	::testing::InitGoogleTest(&argc, argv);
+	if (argc > 1) {
+	  sparkcolumnarplugin::shuffle::input_file = std::string(argv[1]);
+	}
+	return RUN_ALL_TESTS();
+}
+
