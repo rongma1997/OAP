@@ -17,8 +17,11 @@
 
 #pragma once
 
+#include <chrono>
 #include <iomanip>
+#include <iostream>
 #include <sstream>
+#include <thread>
 
 #include <arrow/filesystem/filesystem.h>
 #include <arrow/filesystem/localfs.h>
@@ -29,6 +32,20 @@
 
 namespace sparkcolumnarplugin {
 namespace shuffle {
+
+#define EVAL_START(name, sid)                                           \
+  std::cout << "native " << name << "_start "                           \
+            << std::chrono::duration_cast<std::chrono::nanoseconds>(    \
+                   std::chrono::steady_clock::now().time_since_epoch()) \
+                   .count()                                             \
+            << " threadid " << sid << std::endl;
+
+#define EVAL_END(name)                                                  \
+  std::cout << "native " << name << "_end "                             \
+            << std::chrono::duration_cast<std::chrono::nanoseconds>(    \
+                   std::chrono::steady_clock::now().time_since_epoch()) \
+                   .count()                                             \
+            << std::endl;
 
 static std::string GenerateUUID() {
   boost::uuids::random_generator generator;

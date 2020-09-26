@@ -25,6 +25,7 @@
 #include <gandiva/tree_expr_builder.h>
 
 #include "shuffle/splitter.h"
+#include "shuffle/utils.h"
 
 namespace sparkcolumnarplugin {
 namespace shuffle {
@@ -183,11 +184,15 @@ arrow::Status Splitter::DoSplit(const arrow::RecordBatch& rb,
 }  // namespace shuffle
 
 arrow::Status Splitter::Split(const arrow::RecordBatch& rb) {
+  EVAL_START("split", options_.thread_id)
   ARROW_ASSIGN_OR_RAISE(auto writer_idx, GetNextBatchPartitionWriterIndex(rb));
-  return DoSplit(rb, writer_idx);
+  RETURN_NOT_OK(DoSplit(rb, writer_idx));
+  EVAL_END("split")
+  return arrow::Status::OK();
 }
 
 arrow::Status Splitter::Stop() {
+  EVAL_START("write", options_.thread_id)
   // open data file output stream
   ARROW_ASSIGN_OR_RAISE(data_file_os_,
                         arrow::io::FileOutputStream::Open(options_.data_file, true));
@@ -210,6 +215,7 @@ arrow::Status Splitter::Stop() {
   // close data file output Stream
   RETURN_NOT_OK(data_file_os_->Close());
 
+  EVAL_END("write")
   return arrow::Status::OK();
 }
 
@@ -224,8 +230,9 @@ arrow::Status Splitter::CreatePartitionWriter(int32_t partition_id) {
     ARROW_ASSIGN_OR_RAISE(
         partition_writer_[partition_id],
         PartitionWriter::Create(partition_id, options_.buffer_size,
-                                options_.compression_type, last_type_id_, column_type_id_,
-                                schema_, data_file_os_, spilled_file_dir));
+                                options_.compression_type, last_type_id_,
+                                options_.thread_id, column_type_id_, schema_,
+                                data_file_os_, spilled_file_dir));
   }
   return arrow::Status::OK();
 }
@@ -348,9 +355,12 @@ arrow::Status FallbackRangeSplitter::Init() {
 }
 
 arrow::Status FallbackRangeSplitter::Split(const arrow::RecordBatch& rb) {
+  EVAL_START("split", options_.thread_id)
   ARROW_ASSIGN_OR_RAISE(auto writer_idx, GetNextBatchPartitionWriterIndex(rb));
   ARROW_ASSIGN_OR_RAISE(auto remove_pid, rb.RemoveColumn(0));
-  return DoSplit(*remove_pid, writer_idx);
+  RETURN_NOT_OK(DoSplit(*remove_pid, writer_idx));
+  EVAL_END("split")
+  return arrow::Status::OK();
 }
 
 arrow::Result<std::vector<int32_t>>

@@ -1173,6 +1173,20 @@ Java_com_intel_oap_vectorized_ShuffleSplitterJniWrapper_nativeMake(
       return 0;
     }
   }
+
+  jclass cls = env->FindClass("java/lang/Thread");
+  jmethodID mid = env->GetStaticMethodID(cls, "currentThread", "()Ljava/lang/Thread;");
+  jobject thread = env->CallStaticObjectMethod(cls, mid);
+  if (thread == NULL) {
+    std::cout << "Error while calling static method: currentThread" << std::endl;
+  }
+  jmethodID mid_getid = env->GetMethodID(cls, "getId", "()J");
+  if (mid_getid == NULL) {
+    std::cout << "Error while calling GetMethodID for: getId" << std::endl;
+  }
+  jlong sid = env->CallLongMethod(thread, mid_getid);
+  splitOptions.thread_id = (int64_t)sid;
+
   auto make_result = Splitter::Make(partitioning_name, std::move(schema), num_partitions,
                                     expr_vector, std::move(splitOptions));
   if (!make_result.ok()) {

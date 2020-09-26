@@ -28,6 +28,7 @@
 #include <arrow/util/compression.h>
 
 #include "shuffle/type.h"
+#include "shuffle/utils.h"
 #include "utils/macros.h"
 
 namespace sparkcolumnarplugin {
@@ -104,7 +105,7 @@ arrow::enable_if_binary_like<T, arrow::Status> inline WriteBinary(
 class PartitionWriter {
  public:
   PartitionWriter(int32_t partition_id, int64_t capacity,
-                  arrow::Compression::type compression_type, Type::typeId last_type,
+                  arrow::Compression::type compression_type, Type::typeId last_type, int64_t thread_id,
                   const std::vector<Type::typeId>& column_type_id,
                   const std::shared_ptr<arrow::Schema>& schema,
                   const std::shared_ptr<arrow::io::FileOutputStream>& data_file_os,
@@ -115,6 +116,7 @@ class PartitionWriter {
         capacity_(capacity),
         compression_type_(compression_type),
         last_type_(last_type),
+        thread_id_(thread_id),
         column_type_id_(column_type_id),
         schema_(schema),
         data_file_os_(data_file_os),
@@ -126,7 +128,7 @@ class PartitionWriter {
 
   static arrow::Result<std::shared_ptr<PartitionWriter>> Create(
       int32_t partition_id, int64_t capacity, arrow::Compression::type compression_type,
-      Type::typeId last_type, const std::vector<Type::typeId>& column_type_id,
+      Type::typeId last_type, int64_t thread_id, const std::vector<Type::typeId>& column_type_id,
       const std::shared_ptr<arrow::Schema>& schema,
       const std::shared_ptr<arrow::io::FileOutputStream>& data_file_os,
       std::string spilled_file_dir);
@@ -146,7 +148,9 @@ class PartitionWriter {
       if (type_id == last_type_) {
         // Write to spilled file, close the file but don't call RecordBatchWriter.Close()
         // since it may not be the last batch to write
+        EVAL_START("spill", thread_id_);
         TIME_NANO_OR_RAISE(spill_time_, Spill());
+        EVAL_END("spill")
       }
       return true;
     }
@@ -263,6 +267,8 @@ class PartitionWriter {
   std::string spilled_file_;
   std::shared_ptr<arrow::io::FileOutputStream> spilled_file_os_;
   std::shared_ptr<arrow::ipc::RecordBatchWriter> spilled_file_writer_;
+
+  int64_t thread_id_;
 };
 
 }  // namespace shuffle

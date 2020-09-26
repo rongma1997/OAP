@@ -31,7 +31,7 @@ namespace shuffle {
 
 arrow::Result<std::shared_ptr<PartitionWriter>> PartitionWriter::Create(
     int32_t partition_id, int64_t capacity, arrow::Compression::type compression_type,
-    Type::typeId last_type, const std::vector<Type::typeId>& column_type_id,
+    Type::typeId last_type, int64_t thread_id, const std::vector<Type::typeId>& column_type_id,
     const std::shared_ptr<arrow::Schema>& schema,
     const std::shared_ptr<arrow::io::FileOutputStream>& data_file_os,
     std::string spilled_file_dir) {
@@ -79,7 +79,7 @@ arrow::Result<std::shared_ptr<PartitionWriter>> PartitionWriter::Create(
     }
   }
   return std::make_shared<PartitionWriter>(
-      partition_id, capacity, compression_type, last_type, column_type_id, schema,
+      partition_id, capacity, compression_type, last_type, thread_id, column_type_id, schema,
       data_file_os, std::move(spilled_file_dir), std::move(buffers),
       std::move(binary_bulders), std::move(large_binary_bulders));
 }

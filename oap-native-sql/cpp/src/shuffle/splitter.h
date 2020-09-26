@@ -40,6 +40,7 @@ struct SplitOptions {
 
   std::string data_file;
 
+  int64_t thread_id = 0;
   static SplitOptions Defaults();
 };
 
