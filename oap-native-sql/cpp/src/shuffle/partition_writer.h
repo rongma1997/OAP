@@ -28,6 +28,7 @@
 #include <arrow/util/compression.h>
 
 #include "shuffle/type.h"
+#include "shuffle/utils.h"
 #include "utils/macros.h"
 
 namespace sparkcolumnarplugin {
@@ -103,20 +104,19 @@ arrow::enable_if_binary_like<T, arrow::Status> inline WriteBinary(
 }  // namespace detail
 class PartitionWriter {
  public:
-  PartitionWriter(int32_t partition_id, int64_t capacity,
-                  arrow::Compression::type compression_type, Type::typeId last_type,
+  PartitionWriter(int32_t partition_id, Type::typeId last_type,
                   const std::vector<Type::typeId>& column_type_id,
                   const std::shared_ptr<arrow::Schema>& schema,
+                  const SplitOptions& options,
                   const std::shared_ptr<arrow::io::FileOutputStream>& data_file_os,
                   std::string spilled_file_dir, TypeBufferInfos buffers,
                   BinaryBuilders binary_builders,
                   LargeBinaryBuilders large_binary_builders)
       : partition_id_(partition_id),
-        capacity_(capacity),
-        compression_type_(compression_type),
         last_type_(last_type),
         column_type_id_(column_type_id),
         schema_(schema),
+        options_(options),
         data_file_os_(data_file_os),
         spilled_file_dir_(std::move(spilled_file_dir)),
         buffers_(std::move(buffers)),
@@ -125,9 +125,9 @@ class PartitionWriter {
         write_offset_(Type::typeId::NUM_TYPES) {}
 
   static arrow::Result<std::shared_ptr<PartitionWriter>> Create(
-      int32_t partition_id, int64_t capacity, arrow::Compression::type compression_type,
-      Type::typeId last_type, const std::vector<Type::typeId>& column_type_id,
-      const std::shared_ptr<arrow::Schema>& schema,
+      int32_t partition_id, Type::typeId last_type,
+      const std::vector<Type::typeId>& column_type_id,
+      const std::shared_ptr<arrow::Schema>& schema, const SplitOptions& options,
       const std::shared_ptr<arrow::io::FileOutputStream>& data_file_os,
       std::string spilled_file_dir);
 
@@ -142,11 +142,13 @@ class PartitionWriter {
   int64_t GetBytesSpilled() const { return bytes_spilled_; }
 
   arrow::Result<bool> inline CheckTypeWriteEnds(const Type::typeId& type_id) {
-    if (write_offset_[type_id] == capacity_) {
+    if (write_offset_[type_id] == options_.buffer_size) {
       if (type_id == last_type_) {
         // Write to spilled file, close the file but don't call RecordBatchWriter.Close()
         // since it may not be the last batch to write
+        EVAL_START("spill", options_.thread_id)
         TIME_NANO_OR_RAISE(spill_time_, Spill());
+        EVAL_END("spill", options_.thread_id, options_.task_attempt_id)
       }
       return true;
     }
@@ -238,13 +240,12 @@ class PartitionWriter {
   arrow::Result<std::shared_ptr<arrow::RecordBatch>> MakeRecordBatchAndReset();
 
   const int32_t partition_id_;
-  const int64_t capacity_;
-  const arrow::Compression::type compression_type_;
   const Type::typeId last_type_;
 
   // hold references to splitter
   const std::vector<Type::typeId>& column_type_id_;
   const std::shared_ptr<arrow::Schema>& schema_;
+  const SplitOptions& options_;
   const std::shared_ptr<arrow::io::FileOutputStream>& data_file_os_;
 
   std::string spilled_file_dir_;

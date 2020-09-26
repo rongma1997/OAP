@@ -33,16 +33,6 @@
 namespace sparkcolumnarplugin {
 namespace shuffle {
 
-struct SplitOptions {
-  int32_t buffer_size = kDefaultSplitterBufferSize;
-  int32_t num_sub_dirs = kDefaultNumSubDirs;
-  arrow::Compression::type compression_type = arrow::Compression::UNCOMPRESSED;
-
-  std::string data_file;
-
-  static SplitOptions Defaults();
-};
-
 class Splitter {
  public:
   static arrow::Result<std::shared_ptr<Splitter>> Make(
