@@ -34,18 +34,13 @@
 namespace sparkcolumnarplugin {
 namespace shuffle {
 
-std::string input_file;
+std::vector<std::string> input_files;
 const int num_partitions = 336;
 const int buffer_size = 20480;
 
 class BenchmarkShuffleSplit : public ::testing::Test {
  public:
-  void SetUp() override {
-    // read input from parquet file
-	if (input_file.length() == 0) {
-		input_file = "hdfs://sr247:8020/user/sparkuser/small_lineitem_336p/part-00000-3f4314ce-0a80-4bca-b497-bb10c0fbf9f5-c000.snappy.parquet";
-	}
-	std::cout << "Input file: " + input_file << std::endl;
+  void GetRecordBatchReader(const std::string& input_file) {
     std::shared_ptr<arrow::fs::FileSystem> fs;
     std::string file_name;
     ARROW_ASSIGN_OR_THROW(fs, arrow::fs::FileSystemFromUriOrPath(input_file, &file_name))
@@ -75,6 +70,17 @@ class BenchmarkShuffleSplit : public ::testing::Test {
 
     ASSERT_NOT_OK(parquet_reader->GetRecordBatchReader(row_group_indices, column_indices,
                                                        &record_batch_reader));
+  }
+  void SetUp() override {
+    // read input from parquet file
+	if (input_files.size() == 0) {
+		input_files.push_back("hdfs://sr247:8020/user/sparkuser/small_lineitem_336p/part-00000-3f4314ce-0a80-4bca-b497-bb10c0fbf9f5-c000.snappy.parquet");
+	}
+	std::cout << "Input file: " << std::endl;
+	for (const auto& file: input_files) {
+		std::cout << file << std::endl;
+	}
+	GetRecordBatchReader(input_files[0]);
 	std::cout << schema->ToString() << std::endl;
 
 	// printSchema:
@@ -127,6 +133,20 @@ class BenchmarkShuffleSplit : public ::testing::Test {
 		num_rows += record_batch->num_rows();
       }
     } while (record_batch);
+	std::cout << "Done " << input_files[0] << std::endl;
+
+	for(int i = 1; i < input_files.size(); ++i) {
+	  GetRecordBatchReader(input_files[i]);
+	  do {
+		TIME_NANO_OR_THROW(elapse_read, record_batch_reader->ReadNext(&record_batch));
+		if (record_batch) {
+		  TIME_NANO_OR_THROW(split_time, splitter->Split(*record_batch));
+		  num_batches += 1;
+		  num_rows += record_batch->num_rows();
+		}
+	  } while (record_batch);
+	  std::cout << "Done " << input_files[i] << std::endl;
+	}
 
     ASSERT_NOT_OK(splitter->Stop());
 
@@ -166,7 +186,9 @@ TEST_F(BenchmarkShuffleSplit, LZ4) { DoSplit(arrow::Compression::LZ4_FRAME); }
 int main(int argc, char** argv) {
 	::testing::InitGoogleTest(&argc, argv);
 	if (argc > 1) {
-	  sparkcolumnarplugin::shuffle::input_file = std::string(argv[1]);
+      for (int i = 1; i < argc; ++i) {
+		sparkcolumnarplugin::shuffle::input_files.push_back(std::string(argv[i]));
+	  }
 	}
 	return RUN_ALL_TESTS();
 }
