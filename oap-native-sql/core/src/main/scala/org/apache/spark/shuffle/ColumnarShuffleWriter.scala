@@ -17,10 +17,9 @@
 
 package org.apache.spark.shuffle
 
-import java.io.{File, FileInputStream, FileOutputStream, IOException}
+import java.io.IOException
 
 import com.google.common.annotations.VisibleForTesting
-import com.google.common.io.Closeables
 import com.intel.oap.vectorized.{
   ArrowWritableColumnVector,
   ShuffleSplitterJniWrapper,
@@ -29,9 +28,7 @@ import com.intel.oap.vectorized.{
 import org.apache.spark._
 import org.apache.spark.internal.Logging
 import org.apache.spark.scheduler.MapStatus
-import org.apache.spark.shuffle.IndexShuffleBlockResolver.NOOP_REDUCE_ID
 import org.apache.spark.sql.vectorized.ColumnarBatch
-import org.apache.spark.storage.ShuffleIndexBlockId
 import org.apache.spark.util.Utils
 
 import scala.collection.mutable.ListBuffer
@@ -84,7 +81,6 @@ class ColumnarShuffleWriter[K, V](
     }
 
     val dataTmp = Utils.tempFileWith(shuffleBlockResolver.getDataFile(dep.shuffleId, mapId))
-    logWarning("Task attempt id: " + TaskContext.get().taskAttemptId())
     if (nativeSplitter == 0) {
       nativeSplitter = jniWrapper.make(
         dep.nativePartitioning,

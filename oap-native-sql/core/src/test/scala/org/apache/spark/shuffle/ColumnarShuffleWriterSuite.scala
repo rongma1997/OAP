@@ -86,6 +86,8 @@ class ColumnarShuffleWriterSuite extends SharedSparkSession {
       new NativePartitioning("rr", numPartitions, ConverterUtils.getSchemaBytesBuf(schema)))
     when(dependency.dataSize)
       .thenReturn(SQLMetrics.createSizeMetric(spark.sparkContext, "data size"))
+    when(dependency.bytesSpilled)
+      .thenReturn(SQLMetrics.createSizeMetric(spark.sparkContext, "shuffle bytes spilled"))
     when(dependency.numInputRows)
       .thenReturn(SQLMetrics.createMetric(spark.sparkContext, "number of input rows"))
     when(dependency.splitTime)

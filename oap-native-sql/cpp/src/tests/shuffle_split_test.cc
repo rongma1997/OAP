@@ -128,22 +128,22 @@ const std::vector<std::string> SplitterTest::input_data_1 = {
     R"(["alice", "bob", null, null])",
     R"(["-1.01", "2.01", "-3.01", null])"};
 
-const std::vector<std::string> SplitterTest::input_data_2 = {
-    "[null, null, null, null]",
-    "[null, null, null, 4]",
-    "[1, -1, 1, -1]",
-    "[1, 1, 1, 1]",
-    R"([0.142857, -0.142857, 0.1234567, -0.1234567])",
-    "[true, false, true, false]",
-    R"(["bob", "alice", "bob", "alice"])",
-    R"([null, null, null, null])",
-    R"([null, null, "3.01", "4.01"])"};
+const std::vector<std::string> SplitterTest::input_data_2 = {"[null, null]",
+                                                             "[null, null]",
+                                                             "[1, -1]",
+                                                             "[1, 1]",
+                                                             R"([0.142857, -0.142857])",
+                                                             "[true, false]",
+                                                             R"(["bob", "alice"])",
+                                                             R"([null, null])",
+                                                             R"([null, null])"};
 
 TEST_F(SplitterTest, TestSingleSplitter) {
-  split_options_.buffer_size = 2;
+  split_options_.buffer_size = 4;
   ARROW_ASSIGN_OR_THROW(splitter_, Splitter::Make("rr", schema_, 1, split_options_))
 
   ASSERT_NOT_OK(splitter_->Split(*input_batch_1_));
+  std::cout << "split done" << std::endl;
   ASSERT_NOT_OK(splitter_->Split(*input_batch_2_));
   ASSERT_NOT_OK(splitter_->Split(*input_batch_1_));
 
@@ -164,26 +164,24 @@ TEST_F(SplitterTest, TestSingleSplitter) {
 
   std::vector<std::shared_ptr<arrow::RecordBatch>> batches;
   ASSERT_NOT_OK(file_reader->ReadAll(&batches));
-  ASSERT_EQ(batches.size(), 6);
+  ASSERT_EQ(batches.size(), 3);
 
+  std::vector<arrow::RecordBatch*> expected = {input_batch_1_.get(), input_batch_2_.get(),
+                                               input_batch_1_.get()};
   for (auto i = 0; i < batches.size(); ++i) {
     const auto& rb = batches[i];
     ASSERT_EQ(rb->num_columns(), schema_->num_fields());
-    ASSERT_EQ(rb->num_rows(), split_options_.buffer_size);
+    ASSERT_LE(rb->num_rows(), split_options_.buffer_size);
     for (auto j = 0; j < rb->num_columns(); ++j) {
       ASSERT_EQ(rb->column(j)->length(), rb->num_rows());
     }
-    if (i == batches.size() - 1) {
-      std::shared_ptr<arrow::RecordBatch> last_output_batch;
-      ARROW_ASSIGN_OR_THROW(last_output_batch, TakeRows(input_batch_1_, "[2, 3]"));
-      ASSERT_TRUE(rb->Equals(*last_output_batch));
-    }
+    ASSERT_TRUE(rb->Equals(*expected[i]));
   }
 }
 
 TEST_F(SplitterTest, TestRoundRobinSplitter) {
   int32_t num_partitions = 2;
-  split_options_.buffer_size = 2;
+  split_options_.buffer_size = 4;
   ARROW_ASSIGN_OR_THROW(splitter_,
                         Splitter::Make("rr", schema_, num_partitions, split_options_));
 
@@ -213,11 +211,11 @@ TEST_F(SplitterTest, TestRoundRobinSplitter) {
   std::vector<std::shared_ptr<arrow::RecordBatch>> batches;
   ASSERT_EQ(*file_reader->schema(), *schema_);
   ASSERT_NOT_OK(file_reader->ReadAll(&batches));
-  ASSERT_EQ(batches.size(), 3);
+  ASSERT_EQ(batches.size(), 2);
   for (auto i = 0; i < batches.size(); ++i) {
     const auto& rb = batches[i];
     ASSERT_EQ(rb->num_columns(), schema_->num_fields());
-    ASSERT_EQ(rb->num_rows(), split_options_.buffer_size);
+    ASSERT_LE(rb->num_rows(), split_options_.buffer_size);
     for (auto j = 0; j < rb->num_columns(); ++j) {
       ASSERT_EQ(rb->column(j)->length(), rb->num_rows());
     }
@@ -232,11 +230,11 @@ TEST_F(SplitterTest, TestRoundRobinSplitter) {
   ASSERT_EQ(*file_reader->schema(), *schema_);
   ASSERT_NOT_OK(file_->Advance(lengths[0]));
   ASSERT_NOT_OK(file_reader->ReadAll(&batches));
-  ASSERT_EQ(batches.size(), 3);
+  ASSERT_EQ(batches.size(), 2);
   for (auto i = 0; i < batches.size(); ++i) {
     const auto& rb = batches[i];
     ASSERT_EQ(rb->num_columns(), schema_->num_fields());
-    ASSERT_EQ(rb->num_rows(), split_options_.buffer_size);
+    ASSERT_LE(rb->num_rows(), split_options_.buffer_size);
     for (auto j = 0; j < rb->num_columns(); ++j) {
       ASSERT_EQ(rb->column(j)->length(), rb->num_rows());
     }
@@ -248,7 +246,7 @@ TEST_F(SplitterTest, TestRoundRobinSplitter) {
 
 TEST_F(SplitterTest, TestHashSplitter) {
   int32_t num_partitions = 2;
-  split_options_.buffer_size = 2;
+  split_options_.buffer_size = 4;
 
   auto f_0 = TreeExprBuilder::MakeField(schema_->field(1));
   auto f_1 = TreeExprBuilder::MakeField(schema_->field(2));
@@ -284,7 +282,7 @@ TEST_F(SplitterTest, TestHashSplitter) {
 
   for (const auto& rb : batches) {
     ASSERT_EQ(rb->num_columns(), schema_->num_fields());
-    ASSERT_EQ(rb->num_rows(), split_options_.buffer_size);
+    ASSERT_LE(rb->num_rows(), split_options_.buffer_size);
     for (auto i = 0; i < rb->num_columns(); ++i) {
       ASSERT_EQ(rb->column(i)->length(), rb->num_rows());
     }
@@ -293,11 +291,14 @@ TEST_F(SplitterTest, TestHashSplitter) {
 
 TEST_F(SplitterTest, TestFallbackRangeSplitter) {
   int32_t num_partitions = 2;
-  split_options_.buffer_size = 2;
+  split_options_.buffer_size = 4;
 
-  std::shared_ptr<arrow::Array> pid_arr;
+  std::shared_ptr<arrow::Array> pid_arr_0;
   ASSERT_NOT_OK(arrow::ipc::internal::json::ArrayFromJSON(arrow::int32(), "[0, 1, 0, 1]",
-                                                          &pid_arr));
+                                                          &pid_arr_0));
+  std::shared_ptr<arrow::Array> pid_arr_1;
+  ASSERT_NOT_OK(arrow::ipc::internal::json::ArrayFromJSON(arrow::int32(), "[0, 1]",
+                                                          &pid_arr_1));
 
   std::shared_ptr<arrow::Schema> schema_w_pid;
   std::shared_ptr<arrow::RecordBatch> input_batch_1_w_pid;
@@ -305,9 +306,9 @@ TEST_F(SplitterTest, TestFallbackRangeSplitter) {
   ARROW_ASSIGN_OR_THROW(schema_w_pid,
                         schema_->AddField(0, arrow::field("pid", arrow::int32())));
   ARROW_ASSIGN_OR_THROW(input_batch_1_w_pid,
-                        input_batch_1_->AddColumn(0, "pid", pid_arr));
+                        input_batch_1_->AddColumn(0, "pid", pid_arr_0));
   ARROW_ASSIGN_OR_THROW(input_batch_2_w_pid,
-                        input_batch_2_->AddColumn(0, "pid", pid_arr));
+                        input_batch_2_->AddColumn(0, "pid", pid_arr_1));
 
   ARROW_ASSIGN_OR_THROW(splitter_, Splitter::Make("range", std::move(schema_w_pid),
                                                   num_partitions, split_options_))
@@ -341,11 +342,11 @@ TEST_F(SplitterTest, TestFallbackRangeSplitter) {
   std::vector<std::shared_ptr<arrow::RecordBatch>> batches;
   ASSERT_EQ(*file_reader->schema(), *schema_);
   ASSERT_NOT_OK(file_reader->ReadAll(&batches));
-  ASSERT_EQ(batches.size(), 3);
+  ASSERT_EQ(batches.size(), 2);
   for (auto i = 0; i < batches.size(); ++i) {
     const auto& rb = batches[i];
     ASSERT_EQ(rb->num_columns(), schema_->num_fields());
-    ASSERT_EQ(rb->num_rows(), split_options_.buffer_size);
+    ASSERT_LE(rb->num_rows(), split_options_.buffer_size);
     for (auto j = 0; j < rb->num_columns(); ++j) {
       ASSERT_EQ(rb->column(j)->length(), rb->num_rows());
     }
@@ -360,11 +361,11 @@ TEST_F(SplitterTest, TestFallbackRangeSplitter) {
   ASSERT_EQ(*file_reader->schema(), *schema_);
   ASSERT_NOT_OK(file_->Advance(lengths[0]));
   ASSERT_NOT_OK(file_reader->ReadAll(&batches));
-  ASSERT_EQ(batches.size(), 3);
+  ASSERT_EQ(batches.size(), 2);
   for (auto i = 0; i < batches.size(); ++i) {
     const auto& rb = batches[i];
     ASSERT_EQ(rb->num_columns(), schema_->num_fields());
-    ASSERT_EQ(rb->num_rows(), split_options_.buffer_size);
+    ASSERT_LE(rb->num_rows(), split_options_.buffer_size);
     for (auto j = 0; j < rb->num_columns(); ++j) {
       ASSERT_EQ(rb->column(j)->length(), rb->num_rows());
     }
