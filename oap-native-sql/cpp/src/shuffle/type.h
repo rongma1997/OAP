@@ -40,6 +40,9 @@ struct SplitOptions {
 
   int64_t thread_id = -1;
   int64_t task_attempt_id = -1;
+
+  arrow::MemoryPool* memory_pool = arrow::default_memory_pool();
+
   static SplitOptions Defaults();
 };
 
