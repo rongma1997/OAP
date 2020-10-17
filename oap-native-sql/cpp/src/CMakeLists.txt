@@ -23,6 +23,9 @@ INCLUDE_DIRECTORIES(${Boost_INCLUDE_DIRS})
 find_package(JNI REQUIRED)
 set(source_root_directory ${CMAKE_CURRENT_SOURCE_DIR})
 
+SET(CMAKE_EXE_LINKER_FLAGS
+        "${CMAKE_EXE_LINKER_FLAGS} -Wl,-rpath,/home/mr/miniconda3/envs/intel-arrow-dev/lib -Wl,-rpath-link,/home/mr/miniconda3/envs/intel-arrow-dev/lib -L/home/mr/miniconda3/envs/intel-arrow-dev/lib")
+
 # Gandiva protobuf
 
 set(CMAKE_FIND_LIBRARY_SUFFIXES ".so")
@@ -115,9 +118,12 @@ set(PROTO_HDRS "${PROTO_OUTPUT_DIR}/Exprs.pb.h")
 
 if(TESTS)
   find_package(GTest)
+  find_library(GTEST_LIB gtest)
+  find_library(GMOCK_LIB gmock)
+  find_library(GTEST_MAIN_LIB gtest_main)
 macro(package_add_test TESTNAME)
   add_executable(${TESTNAME} ${ARGN})
-  target_link_libraries(${TESTNAME} gtest gmock gtest_main spark_columnar_jni dl ${CMAKE_THREAD_LIBS_INIT})
+  target_link_libraries(${TESTNAME} ${GTEST_LIB} ${GMOCK_LIB} ${GTEST_MAIN_LIB} spark_columnar_jni ${CMAKE_THREAD_LIBS_INIT})
   target_include_directories(${TESTNAME} PUBLIC ${source_root_directory})
   gtest_discover_tests(${TESTNAME}
     WORKING_DIRECTORY ${PROJECT_DIR}
