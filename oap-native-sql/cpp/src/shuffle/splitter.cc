@@ -35,13 +35,13 @@ SplitOptions SplitOptions::Defaults() { return SplitOptions(); }
 
 class Splitter::PartitionWriter {
  public:
-  PartitionWriter() = default;
   explicit PartitionWriter(Splitter* splitter, std::string spilled_file)
       : splitter_(splitter), spilled_file_(std::move(spilled_file)) {}
 
   arrow::Status Spill(const std::shared_ptr<arrow::RecordBatch>& batch) {
     RETURN_NOT_OK(EnsureOpened());
     TIME_NANO_OR_RAISE(spill_time, spilled_file_writer_->WriteRecordBatch(*batch));
+    return arrow::Status::OK();
   }
 
   arrow::Status WriteLastRecordBatchAndClose(
@@ -524,7 +524,7 @@ arrow::Status Splitter::CreatePartitionWriter(int32_t partition_id) {
       (sub_dir_selection_[dir_selection_] + 1) % options_.num_sub_dirs;
   dir_selection_ = (dir_selection_ + 1) % configured_dirs_.size();
   ARROW_ASSIGN_OR_RAISE(auto spilled_file, CreateTempShuffleFile(spilled_file_dir));
-  partition_writer_[partition_id] = std::make_shared<PartitionWriter>(this, spilled_file);
+  partition_writer_[partition_id] = std::make_shared<PartitionWriter>(this, std::move(spilled_file));
   return arrow::Status::OK();
 }
 
