@@ -39,8 +39,17 @@ class Splitter::PartitionWriter {
       : splitter_(splitter), spilled_file_(std::move(spilled_file)) {}
 
   arrow::Status Spill(const std::shared_ptr<arrow::RecordBatch>& batch) {
-    RETURN_NOT_OK(EnsureOpened());
+//    RETURN_NOT_OK(EnsureOpened());
+    ARROW_ASSIGN_OR_RAISE(auto before_write, splitter_->data_file_os_->Tell());
+    ARROW_ASSIGN_OR_RAISE(
+        spilled_file_writer_,
+        arrow::ipc::NewStreamWriter(
+            splitter_->data_file_os_.get(), splitter_->schema_,
+            SplitterIpcWriteOptions(splitter_->options_.compression_type)));
     TIME_NANO_OR_RAISE(spill_time, spilled_file_writer_->WriteRecordBatch(*batch));
+    RETURN_NOT_OK(spilled_file_writer_->Close());
+    ARROW_ASSIGN_OR_RAISE(auto after_write, splitter_->data_file_os_->Tell());
+    partition_length += after_write - before_write;
     return arrow::Status::OK();
   }
 
@@ -85,16 +94,16 @@ class Splitter::PartitionWriter {
               data_file_os.get(), splitter_->schema_,
               SplitterIpcWriteOptions(splitter_->options_.compression_type)));
       // write last record batch, it is the only batch to write so it can't be null
-      if (batch == nullptr) {
-        return arrow::Status::Invalid("Partition writer got empty partition");
-      }
+//      if (batch == nullptr) {
+//        return arrow::Status::Invalid("Partition writer got empty partition");
+//      }
       RETURN_NOT_OK(data_file_writer->WriteRecordBatch(*batch));
       // write EOS
       RETURN_NOT_OK(data_file_writer->Close());
     }
 
     ARROW_ASSIGN_OR_RAISE(auto after_write, data_file_os->Tell());
-    partition_length = after_write - before_write;
+    partition_length += after_write - before_write;
 
     auto end_write = std::chrono::steady_clock::now();
     write_time =
@@ -229,9 +238,6 @@ arrow::Status Splitter::Split(const arrow::RecordBatch& rb) {
 
 arrow::Status Splitter::Stop() {
   EVAL_START("write", options_.thread_id)
-  // open data file output stream
-  ARROW_ASSIGN_OR_RAISE(data_file_os_,
-                        arrow::io::FileOutputStream::Open(options_.data_file, true));
 
   // stop PartitionWriter and collect metrics
   for (auto pid = 0; pid < num_partitions_; ++pid) {
@@ -244,15 +250,17 @@ arrow::Status Splitter::Stop() {
     }
     if (partition_writer_[pid] != nullptr) {
       const auto& writer = partition_writer_[pid];
-      partition_lengths_.push_back(writer->partition_length);
+//      partition_lengths_.push_back(writer->partition_length);
       total_bytes_written_ += writer->partition_length;
       total_bytes_spilled_ += writer->bytes_spilled;
       total_write_time_ += writer->write_time;
       total_spill_time_ += writer->spill_time;
     } else {
-      partition_lengths_.push_back(0);
+//      partition_lengths_.push_back(0);
     }
+    partition_lengths_.push_back(0);
   }
+  partition_lengths_[0] = first_length_;
 
   // close data file output Stream
   RETURN_NOT_OK(data_file_os_->Close());
@@ -352,7 +360,17 @@ arrow::Status Splitter::DoSplit(const arrow::RecordBatch& rb) {
           RETURN_NOT_OK(CreatePartitionWriter(pid));
         }
         ARROW_ASSIGN_OR_RAISE(auto batch, MakeRecordBatchAndReset(pid));
+        auto first_spill = false;
+        if (data_file_os_ == nullptr) {
+          // open data file output stream
+          ARROW_ASSIGN_OR_RAISE(data_file_os_,
+                                arrow::io::FileOutputStream::Open(options_.data_file, true));
+          first_spill = true;
+        }
         RETURN_NOT_OK(partition_writer_[pid]->Spill(batch));
+        if (first_spill) {
+          ARROW_ASSIGN_OR_RAISE(first_length_, data_file_os_->Tell());
+        }
       } else if (!partition_buffer_initialized_[pid]) {
         RETURN_NOT_OK(InitPartitionBuffers(pid));
       }
@@ -523,7 +541,8 @@ arrow::Status Splitter::CreatePartitionWriter(int32_t partition_id) {
   sub_dir_selection_[dir_selection_] =
       (sub_dir_selection_[dir_selection_] + 1) % options_.num_sub_dirs;
   dir_selection_ = (dir_selection_ + 1) % configured_dirs_.size();
-  ARROW_ASSIGN_OR_RAISE(auto spilled_file, CreateTempShuffleFile(spilled_file_dir));
+  // ARROW_ASSIGN_OR_RAISE(auto spilled_file, CreateTempShuffleFile(spilled_file_dir));
+  auto spilled_file = options_.data_file;
   partition_writer_[partition_id] = std::make_shared<PartitionWriter>(this, std::move(spilled_file));
   return arrow::Status::OK();
 }

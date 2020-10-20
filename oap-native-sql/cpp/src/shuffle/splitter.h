@@ -148,6 +148,7 @@ class Splitter {
   std::vector<std::string> configured_dirs_;
 
   std::shared_ptr<arrow::io::FileOutputStream> data_file_os_;
+  int64_t first_length_ = 0;
 };
 
 class RoundRobinSplitter : public Splitter {
