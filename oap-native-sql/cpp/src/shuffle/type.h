@@ -46,18 +46,6 @@ struct SplitOptions {
   static SplitOptions Defaults();
 };
 
-struct BufferInfo {
-  std::shared_ptr<arrow::Buffer> validity_buffer;
-  std::shared_ptr<arrow::Buffer> value_buffer;
-  uint8_t* validity_addr;
-  uint8_t* value_addr;
-};
-
-struct BufferAddr {
-  uint8_t* validity_addr;
-  uint8_t* value_addr;
-};
-
 namespace Type {
 /// \brief Data type enumeration for shuffle splitter
 ///
@@ -85,16 +73,5 @@ static const typeId all[] = {
 };
 
 }  // namespace Type
-
-using BufferInfos = std::deque<std::unique_ptr<BufferInfo>>;
-using TypeBufferInfos = std::vector<BufferInfos>;
-using BinaryBuilders = std::deque<std::unique_ptr<arrow::BinaryBuilder>>;
-using LargeBinaryBuilders = std::deque<std::unique_ptr<arrow::LargeBinaryBuilder>>;
-using BufferPtr = std::shared_ptr<arrow::Buffer>;
-using SrcBuffers = std::vector<BufferAddr>;
-using SrcArrays = std::vector<std::shared_ptr<arrow::Array>>;
-using SrcBinaryArrays = std::vector<std::shared_ptr<arrow::BinaryArray>>;
-using SrcLargeBinaryArrays = std::vector<std::shared_ptr<arrow::LargeBinaryArray>>;
-
 }  // namespace shuffle
 }  // namespace sparkcolumnarplugin
