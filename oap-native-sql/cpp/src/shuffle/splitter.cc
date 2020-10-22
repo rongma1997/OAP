@@ -15,7 +15,6 @@
  * limitations under the License.
  */
 
-#include <immintrin.h>
 #include <memory>
 #include <utility>
 
@@ -28,6 +27,10 @@
 #include "shuffle/splitter.h"
 #include "shuffle/utils.h"
 #include "utils/macros.h"
+
+#if defined(COLUMNAR_PLUGIN_USE_AVX512)
+#include <immintrin.h>
+#endif
 
 namespace sparkcolumnarplugin {
 namespace shuffle {
@@ -394,7 +397,11 @@ arrow::Status Splitter::DoSplit(const arrow::RecordBatch& rb) {
     }
   }
 
+#if defined(COLUMNAR_PLUGIN_USE_AVX512)
+  RETURN_NOT_OK(SplitFixedWidthValueBufferAVX(rb));
+#else
   RETURN_NOT_OK(SplitFixedWidthValueBuffer(rb));
+#endif
   RETURN_NOT_OK(SplitFixedWidthValidityBuffer(rb));
   RETURN_NOT_OK(SplitBinaryArray(rb));
   RETURN_NOT_OK(SplitLargeBinaryArray(rb));
@@ -414,8 +421,7 @@ arrow::Status Splitter::SpillPartition(int32_t partition_id) {
   return partition_writer_[partition_id]->Spill(batch);
 }
 
-__attribute__((target("default"))) arrow::Status Splitter::SplitFixedWidthValueBuffer(
-    const arrow::RecordBatch& rb) {
+arrow::Status Splitter::SplitFixedWidthValueBuffer(const arrow::RecordBatch& rb) {
   const auto num_rows = rb.num_rows();
   for (auto col = 0; col < fixed_width_array_idx_.size(); ++col) {
     std::fill(std::begin(partition_buffer_idx_offset_),
@@ -472,8 +478,8 @@ __attribute__((target("default"))) arrow::Status Splitter::SplitFixedWidthValueB
   return arrow::Status::OK();
 }
 
-__attribute__((target("arch=skylake-avx512"))) arrow::Status
-Splitter::SplitFixedWidthValueBuffer(const arrow::RecordBatch& rb) {
+#if defined(COLUMNAR_PLUGIN_USE_AVX512)
+arrow::Status Splitter::SplitFixedWidthValueBufferAVX(const arrow::RecordBatch& rb) {
   __m256i inc_one = _mm256_load_si256((__m256i*)(ONES));
 
   const auto num_rows = rb.num_rows();
@@ -624,7 +630,8 @@ Splitter::SplitFixedWidthValueBuffer(const arrow::RecordBatch& rb) {
     }
   }
   return arrow::Status::OK();
-}  // namespace shuffle
+}
+#endif
 
 arrow::Status Splitter::SplitFixedWidthValidityBuffer(const arrow::RecordBatch& rb) {
   const auto num_rows = rb.num_rows();

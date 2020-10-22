@@ -85,11 +85,11 @@ class Splitter {
 
   arrow::Status DoSplit(const arrow::RecordBatch& rb);
 
-  __attribute__((target("default"))) arrow::Status SplitFixedWidthValueBuffer(
-      const arrow::RecordBatch& rb);
+  arrow::Status SplitFixedWidthValueBuffer(const arrow::RecordBatch& rb);
 
-  __attribute__((target("arch=skylake-avx512"))) arrow::Status SplitFixedWidthValueBuffer(
-      const arrow::RecordBatch& rb);
+#if defined(COLUMNAR_PLUGIN_USE_AVX512)
+  arrow::Status SplitFixedWidthValueBufferAVX(const arrow::RecordBatch& rb);
+#endif
 
   arrow::Status SpillPartition(int32_t partition_id);
 

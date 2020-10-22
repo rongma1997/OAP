@@ -5,6 +5,7 @@ project(spark_columnar_jni)
 include(ExternalProject)
 include(FindPkgConfig)
 include(GNUInstallDirs)
+include(CheckCXXCompilerFlag)
 
 set(CMAKE_CXX_STANDARD 14)
 
@@ -12,6 +13,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(CMAKE_BUILD_TYPE  "Release")
 
+option(USE_AVX512 "Build with AVX-512 optimizations" OFF)
 option(TESTS "Build the tests" OFF)
 option(BENCHMARKS "Build the benchmarks" OFF)
 option(DEBUG "Enable Debug Info" OFF)
@@ -112,6 +114,20 @@ add_custom_command(OUTPUT ${PROTO_OUTPUT_FILES}
 add_custom_target(jni_proto ALL DEPENDS ${PROTO_OUTPUT_FILES})
 set(PROTO_SRCS "${PROTO_OUTPUT_DIR}/Exprs.pb.cc")
 set(PROTO_HDRS "${PROTO_OUTPUT_DIR}/Exprs.pb.h")
+
+if(USE_AVX512)
+  # Only enable additional instruction sets if they are supported
+  message(STATUS "System processor: ${CMAKE_SYSTEM_PROCESSOR}")
+  if (CMAKE_SYSTEM_PROCESSOR MATCHES "(x86)|(X86)|(amd64)|(AMD64)")
+    set(AVX512_FLAG "-march=skylake-avx512")
+    check_cxx_compiler_flag(${AVX512_FLAG} CXX_SUPPORTS_AVX512)
+    if(NOT CXX_SUPPORTS_AVX512)
+      message(FATAL_ERROR "AVX512 required but compiler doesn't support it.")
+    endif()
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${AVX512_FLAG}")
+    add_definitions(-DCOLUMNAR_PLUGIN_USE_AVX512)
+  endif ()
+endif()
 
 if(TESTS)
   find_package(GTest)
@@ -246,7 +262,6 @@ target_include_directories(spark_columnar_jni PUBLIC ${CMAKE_SYSTEM_INCLUDE_PATH
 set_target_properties(spark_columnar_jni PROPERTIES
                       LIBRARY_OUTPUT_DIRECTORY ${root_directory}/releases
 )
-target_compile_options(spark_columnar_jni PUBLIC -march=skylake-avx512)
 
 if(DEFINED ENV{HADOOP_HOME})
   set(LIBHDFS3_DESTINATION $ENV{HADOOP_HOME}/lib/native)
