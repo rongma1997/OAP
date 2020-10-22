@@ -87,6 +87,8 @@ class Splitter {
 
   arrow::Status SplitFixedWidthValueBuffer(const arrow::RecordBatch& rb);
 
+  arrow::Status SpillPartition(int32_t partition_id);
+
   arrow::Status SplitFixedWidthValidityBuffer(const arrow::RecordBatch& rb);
 
   arrow::Status SplitBinaryArray(const arrow::RecordBatch& rb);
@@ -104,17 +106,17 @@ class Splitter {
 
   arrow::Status CreatePartitionWriter(int32_t partition_id);
 
-  arrow::Status InitPartitionBuffers(int32_t partition_id);
+  arrow::Status AllocatePartitionBuffers(int32_t partition_id, int32_t new_size);
 
   class PartitionWriter;
 
-  std::vector<bool> partition_buffer_initialized_;
+  std::vector<int32_t> partition_buffer_size_;
   std::vector<int32_t> partition_buffer_base_;
   std::vector<int32_t> partition_buffer_offset_;
   std::vector<std::shared_ptr<PartitionWriter>> partition_writer_;
   std::vector<std::vector<uint8_t*>> partition_fixed_width_validity_addrs_;
   std::vector<std::vector<uint8_t*>> partition_fixed_width_value_addrs_;
-  std::vector<std::vector<std::vector<std::shared_ptr<arrow::Buffer>>>>
+  std::vector<std::vector<std::vector<std::shared_ptr<arrow::ResizableBuffer>>>>
       partition_fixed_width_buffers_;
   std::vector<std::vector<std::shared_ptr<arrow::BinaryBuilder>>>
       partition_binary_builders_;
