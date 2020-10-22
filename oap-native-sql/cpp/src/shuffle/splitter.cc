@@ -381,10 +381,12 @@ arrow::Status Splitter::DoSplit(const arrow::RecordBatch& rb) {
                           : options_.buffer_size;
       if (partition_buffer_size_[pid] != 0) {
 #ifdef DEBUG
-        std::cout << "Attempt to reallocate partition buffer for partition id: " << pid
-                  << ", old buffer size: " << partition_buffer_size_[pid]
-                  << ", new buffer size: " << new_size
-                  << ", input record batch size: " << rb.num_rows() << std::endl;
+        std::cout << "Attempt to reallocate partition buffer for partition id: " +
+                         std::to_string(pid) + ", old buffer size: " +
+                         std::to_string(partition_buffer_size_[pid]) +
+                         ", new buffer size: " + std::to_string(new_size) +
+                         ", input record batch size: " + std::to_string(rb.num_rows())
+                  << std::endl;
 #endif
         RETURN_NOT_OK(SpillPartition(pid));
       }
@@ -513,6 +515,7 @@ arrow::Status Splitter::SplitFixedWidthValueBufferAVX(const arrow::RecordBatch& 
 #undef PROCESS
       case Type::SHUFFLE_4BYTE: {
         auto rows = num_rows - num_rows % 8;
+        auto src_addr_32 = reinterpret_cast<uint32_t*>(src_addr);
         for (auto row = 0; row < rows; row += 8) {
           // partition id is 32 bit, 8 partition id
           __m256i partid_8x = _mm256_loadu_si256((__m256i*)&partition_id_[row]);
@@ -527,10 +530,10 @@ arrow::Status Splitter::SplitFixedWidthValueBufferAVX(const arrow::RecordBatch& 
           __m256i dst_idx_8x = _mm256_add_epi32(dst_idx_base_8x, dst_idx_offset_8x);
 
           // prefetch next src block
-          _mm_prefetch((src_addr + row + 128), _MM_HINT_T0);
+          _mm_prefetch((src_addr_32 + row + 128), _MM_HINT_T0);
 
           // source value is 32 bit
-          __m256i src_val_8x = _mm256_loadu_si256((__m256i*)(src_addr + row));
+          __m256i src_val_8x = _mm256_loadu_si256((__m256i*)(src_addr_32 + row));
 
           // calculate dst address, dst_addr = dst_base_addr + dst_idx*4
           //_mm512_cvtepu32_epi64: zero extend dst_offset 32bit*8 -> 64bit*8
@@ -551,12 +554,13 @@ arrow::Status Splitter::SplitFixedWidthValueBufferAVX(const arrow::RecordBatch& 
           auto pid = partition_id_[row];
           reinterpret_cast<uint32_t*>(dst_addrs[pid])[partition_buffer_idx_base_[pid] +
                                                       partition_buffer_idx_offset_[pid]] =
-              reinterpret_cast<uint32_t*>(src_addr)[row];
+              (src_addr_32)[row];
           partition_buffer_idx_offset_[pid]++;
         }
       } break;
       case Type::SHUFFLE_8BYTE: {
         auto rows = num_rows - num_rows % 8;
+        auto src_addr_64 = reinterpret_cast<uint64_t*>(src_addr);
         for (auto row = 0; row < rows; row += 8) {
           // partition id is 32 bit, 8 partition id
           __m256i partid_8x = _mm256_loadu_si256((__m256i*)&partition_id_[row]);
@@ -571,10 +575,10 @@ arrow::Status Splitter::SplitFixedWidthValueBufferAVX(const arrow::RecordBatch& 
           __m256i dst_idx_8x = _mm256_add_epi32(dst_idx_base_8x, dst_idx_offset_8x);
 
           // prefetch next src block
-          _mm_prefetch((src_addr + row + 128), _MM_HINT_T0);
+          _mm_prefetch((src_addr_64 + row + 128), _MM_HINT_T0);
 
           // source value is 64 bit
-          __m512i src_val_8x = _mm512_loadu_si512((__m512i*)(src_addr + row));
+          __m512i src_val_8x = _mm512_loadu_si512((__m512i*)(src_addr_64 + row));
 
           // calculate dst address, dst_addr = dst_base_addr + dst_idx*8
           //_mm512_cvtepu32_epi64: zero extend dst_offset 32bit*8 -> 64bit*8
@@ -595,7 +599,7 @@ arrow::Status Splitter::SplitFixedWidthValueBufferAVX(const arrow::RecordBatch& 
           auto pid = partition_id_[row];
           reinterpret_cast<uint64_t*>(dst_addrs[pid])[partition_buffer_idx_base_[pid] +
                                                       partition_buffer_idx_offset_[pid]] =
-              reinterpret_cast<uint64_t*>(src_addr)[row];
+              (src_addr_64)[row];
           partition_buffer_idx_offset_[pid]++;
         }
       } break;
