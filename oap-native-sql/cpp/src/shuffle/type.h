@@ -31,6 +31,8 @@ static constexpr int32_t kDefaultNumSubDirs = 64;
 // This 0xFFFFFFFF value is the first 4 bytes of a valid IPC message
 static constexpr int32_t kIpcContinuationToken = -1;
 
+const unsigned ONES[] = {1, 1, 1, 1, 1, 1, 1, 1};
+
 struct SplitOptions {
   int32_t buffer_size = kDefaultSplitterBufferSize;
   int32_t num_sub_dirs = kDefaultNumSubDirs;
@@ -68,7 +70,7 @@ enum typeId : int {
 
 static const typeId all[] = {
     SHUFFLE_1BYTE,  SHUFFLE_2BYTE,        SHUFFLE_4BYTE,
-    SHUFFLE_8BYTE,  SHUFFLE_DECIMAL128,  SHUFFLE_BIT,
+    SHUFFLE_8BYTE,  SHUFFLE_DECIMAL128,   SHUFFLE_BIT,
     SHUFFLE_BINARY, SHUFFLE_LARGE_BINARY, SHUFFLE_NULL,
 };
 

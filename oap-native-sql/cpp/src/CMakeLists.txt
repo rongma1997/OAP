@@ -246,6 +246,7 @@ target_include_directories(spark_columnar_jni PUBLIC ${CMAKE_SYSTEM_INCLUDE_PATH
 set_target_properties(spark_columnar_jni PROPERTIES
                       LIBRARY_OUTPUT_DIRECTORY ${root_directory}/releases
 )
+target_compile_options(spark_columnar_jni PUBLIC -march=skylake-avx512)
 
 if(DEFINED ENV{HADOOP_HOME})
   set(LIBHDFS3_DESTINATION $ENV{HADOOP_HOME}/lib/native)

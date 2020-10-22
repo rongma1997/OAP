@@ -85,7 +85,11 @@ class Splitter {
 
   arrow::Status DoSplit(const arrow::RecordBatch& rb);
 
-  arrow::Status SplitFixedWidthValueBuffer(const arrow::RecordBatch& rb);
+  __attribute__((target("default"))) arrow::Status SplitFixedWidthValueBuffer(
+      const arrow::RecordBatch& rb);
+
+  __attribute__((target("arch=skylake-avx512"))) arrow::Status SplitFixedWidthValueBuffer(
+      const arrow::RecordBatch& rb);
 
   arrow::Status SpillPartition(int32_t partition_id);
 
@@ -111,8 +115,8 @@ class Splitter {
   class PartitionWriter;
 
   std::vector<int32_t> partition_buffer_size_;
-  std::vector<int32_t> partition_buffer_base_;
-  std::vector<int32_t> partition_buffer_offset_;
+  std::vector<int32_t> partition_buffer_idx_base_;
+  std::vector<int32_t> partition_buffer_idx_offset_;
   std::vector<std::shared_ptr<PartitionWriter>> partition_writer_;
   std::vector<std::vector<uint8_t*>> partition_fixed_width_validity_addrs_;
   std::vector<std::vector<uint8_t*>> partition_fixed_width_value_addrs_;
