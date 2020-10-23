@@ -518,7 +518,7 @@ arrow::Status Splitter::SplitFixedWidthValueBufferAVX(const arrow::RecordBatch& 
         auto src_addr_32 = reinterpret_cast<uint32_t*>(src_addr);
         for (auto row = 0; row < rows; row += 8) {
           // partition id is 32 bit, 8 partition id
-          __m256i partid_8x = _mm256_loadu_si256((__m256i*)&partition_id_[row]);
+          __m256i partid_8x = _mm256_loadu_si256((__m256i*)(partition_id_.data() + row));
           // dst base address is 64 bit
           __m512i dst_addr_base_8x =
               _mm512_i32gather_epi64(partid_8x, dst_addrs.data(), 8);
@@ -527,6 +527,20 @@ arrow::Status Splitter::SplitFixedWidthValueBufferAVX(const arrow::RecordBatch& 
               _mm256_i32gather_epi32(partition_buffer_idx_base_.data(), partid_8x, 4);
           __m256i dst_idx_offset_8x =
               _mm256_i32gather_epi32(partition_buffer_idx_offset_.data(), partid_8x, 4);
+
+          partition_buffer_idx_offset_[partition_id_[row]]++;
+          std::vector<int32_t> partid_cnt(8);
+          for (auto i = 1; i < 8; ++i) {
+            for (auto j = i - 1; j >= 0; --j) {
+              if (partition_id_[row + i] == partition_id_[row + j]) {
+                partid_cnt[i] = partid_cnt[j] + 1;
+                break;
+              }
+            }
+            partition_buffer_idx_offset_[partition_id_[row + i]]++;
+          }
+          __m256i partid_cnt_8x = _mm256_loadu_si256((__m256i*)(partid_cnt.data()));
+          dst_idx_offset_8x = _mm256_add_epi32(dst_idx_offset_8x, partid_cnt_8x);
           __m256i dst_idx_8x = _mm256_add_epi32(dst_idx_base_8x, dst_idx_offset_8x);
 
           // prefetch next src block
@@ -544,11 +558,6 @@ arrow::Status Splitter::SplitFixedWidthValueBufferAVX(const arrow::RecordBatch& 
 
           // scatter
           _mm512_i64scatter_epi32(nullptr, dst_addr_8x, src_val_8x, 1);
-
-          // update partition_buffer_idx_offset_
-          dst_idx_offset_8x = _mm256_add_epi32(dst_idx_offset_8x, inc_one);
-          _mm256_i32scatter_epi32(partition_buffer_idx_offset_.data(), partid_8x,
-                                  dst_idx_offset_8x, 4);
         }
         for (auto row = rows; row < num_rows; ++row) {
           auto pid = partition_id_[row];
@@ -563,7 +572,7 @@ arrow::Status Splitter::SplitFixedWidthValueBufferAVX(const arrow::RecordBatch& 
         auto src_addr_64 = reinterpret_cast<uint64_t*>(src_addr);
         for (auto row = 0; row < rows; row += 8) {
           // partition id is 32 bit, 8 partition id
-          __m256i partid_8x = _mm256_loadu_si256((__m256i*)&partition_id_[row]);
+          __m256i partid_8x = _mm256_loadu_si256((__m256i*)(partition_id_.data() + row));
           // dst base address is 64 bit
           __m512i dst_addr_base_8x =
               _mm512_i32gather_epi64(partid_8x, dst_addrs.data(), 8);
@@ -572,6 +581,20 @@ arrow::Status Splitter::SplitFixedWidthValueBufferAVX(const arrow::RecordBatch& 
               _mm256_i32gather_epi32(partition_buffer_idx_base_.data(), partid_8x, 4);
           __m256i dst_idx_offset_8x =
               _mm256_i32gather_epi32(partition_buffer_idx_offset_.data(), partid_8x, 4);
+
+          partition_buffer_idx_offset_[partition_id_[row]]++;
+          std::vector<int32_t> partid_cnt(8);
+          for (auto i = 1; i < 8; ++i) {
+            for (auto j = i - 1; j >= 0; --j) {
+              if (partition_id_[row + i] == partition_id_[row + j]) {
+                partid_cnt[i] = partid_cnt[j] + 1;
+                break;
+              }
+            }
+            partition_buffer_idx_offset_[partition_id_[row + i]]++;
+          }
+          __m256i partid_cnt_8x = _mm256_loadu_si256((__m256i*)(partid_cnt.data()));
+          dst_idx_offset_8x = _mm256_add_epi32(dst_idx_offset_8x, partid_cnt_8x);
           __m256i dst_idx_8x = _mm256_add_epi32(dst_idx_base_8x, dst_idx_offset_8x);
 
           // prefetch next src block
@@ -589,11 +612,6 @@ arrow::Status Splitter::SplitFixedWidthValueBufferAVX(const arrow::RecordBatch& 
 
           // scatter
           _mm512_i64scatter_epi64(nullptr, dst_addr_8x, src_val_8x, 1);
-
-          // update partition_buffer_idx_offset_
-          dst_idx_offset_8x = _mm256_add_epi32(dst_idx_offset_8x, inc_one);
-          _mm256_i32scatter_epi32(partition_buffer_idx_offset_.data(), partid_8x,
-                                  dst_idx_offset_8x, 4);
         }
         for (auto row = rows; row < num_rows; ++row) {
           auto pid = partition_id_[row];
