@@ -80,13 +80,13 @@ inline __m256i CountPartitionIdOccurrence(const std::vector<int32_t>& partition_
   tmp6 += (partition_id[row + 6] ^ partition_id[row + 5]) == 0;
   partid_cnt_high = _mm_insert_epi32(partid_cnt_high, tmp6, 2);
 
-  tmp7 = (partition_id[row + 6] ^ partition_id[row]) == 0;
-  tmp7 += (partition_id[row + 6] ^ partition_id[row + 1]) == 0;
-  tmp7 += (partition_id[row + 6] ^ partition_id[row + 2]) == 0;
-  tmp7 += (partition_id[row + 6] ^ partition_id[row + 3]) == 0;
-  tmp7 += (partition_id[row + 6] ^ partition_id[row + 4]) == 0;
-  tmp7 += (partition_id[row + 6] ^ partition_id[row + 5]) == 0;
-  tmp7 += (partition_id[row + 6] ^ partition_id[row + 6]) == 0;
+  tmp7 = (partition_id[row + 7] ^ partition_id[row]) == 0;
+  tmp7 += (partition_id[row + 7] ^ partition_id[row + 1]) == 0;
+  tmp7 += (partition_id[row + 7] ^ partition_id[row + 2]) == 0;
+  tmp7 += (partition_id[row + 7] ^ partition_id[row + 3]) == 0;
+  tmp7 += (partition_id[row + 7] ^ partition_id[row + 4]) == 0;
+  tmp7 += (partition_id[row + 7] ^ partition_id[row + 5]) == 0;
+  tmp7 += (partition_id[row + 7] ^ partition_id[row + 6]) == 0;
   partid_cnt_high = _mm_insert_epi32(partid_cnt_high, tmp7, 3);
 
   __m256i partid_cnt_8x = _mm256_castsi128_si256(partid_cnt_low);
@@ -638,7 +638,7 @@ arrow::Status Splitter::SplitFixedWidthValueBufferAVX(const arrow::RecordBatch& 
           _mm256_i32scatter_epi32(partition_buffer_idx_offset_.data(), partid_8x,
                                   partid_cnt_8x, 4);
 
-          PrefetchDstAddr(dst_addr_8x, 8);
+          PrefetchDstAddr(dst_addr_8x, 4);
         }
         for (auto row = rows; row < num_rows; ++row) {
           auto pid = partition_id_[row];
