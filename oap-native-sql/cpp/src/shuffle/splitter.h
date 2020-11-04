@@ -91,8 +91,6 @@ class Splitter {
   arrow::Status SplitFixedWidthValueBufferAVX(const arrow::RecordBatch& rb);
 #endif
 
-  arrow::Status SpillPartition(int32_t partition_id);
-
   arrow::Status SplitFixedWidthValidityBuffer(const arrow::RecordBatch& rb);
 
   arrow::Status SplitBinaryArray(const arrow::RecordBatch& rb);
@@ -105,12 +103,20 @@ class Splitter {
       const std::shared_ptr<ArrayType>& src_arr,
       const std::vector<std::shared_ptr<BuilderType>>& dst_builders, int64_t num_rows);
 
-  arrow::Result<std::shared_ptr<arrow::RecordBatch>> MakeRecordBatchAndReset(
-      int32_t partition_id);
+  arrow::Status CacheRecordBatchAndReset(int32_t partition_id);
+
+  // Allocate new partition buffers/builders.
+  // If successful, will point partition buffers/builders to new ones, otherwise will
+  // spill the largest partition and retry allocate until no partition to spill.
+  arrow::Status AllocateNew(int32_t partition_id, int32_t new_size);
+
+  // Allocate new partition buffers/builders. May return OOM status.
+  arrow::Status AllocatePartitionBuffers(int32_t partition_id, int32_t new_size);
+
+  // Spill the largest partition, return partition id. If no partition to spill, return -1
+  arrow::Result<int32_t> SpillLargestPartition();
 
   std::string NextSpilledFileDir();
-
-  arrow::Status AllocatePartitionBuffers(int32_t partition_id, int32_t new_size);
 
   class PartitionWriter;
 
@@ -126,6 +132,9 @@ class Splitter {
       partition_binary_builders_;
   std::vector<std::vector<std::shared_ptr<arrow::LargeBinaryBuilder>>>
       partition_large_binary_builders_;
+  std::vector<std::vector<std::shared_ptr<arrow::RecordBatch>>>
+      partition_cached_recordbatch_;
+  std::vector<int64_t> partition_cached_recordbatch_size_;  // in bytes
 
   std::vector<int32_t> fixed_width_array_idx_;
   std::vector<int32_t> binary_array_idx_;
