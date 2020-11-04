@@ -298,6 +298,8 @@ arrow::Status Splitter::Init() {
   partition_fixed_width_validity_addrs_.resize(num_fixed_width);
   partition_fixed_width_value_addrs_.resize(num_fixed_width);
   partition_fixed_width_buffers_.resize(num_fixed_width);
+  binary_array_empirical_size_.resize(binary_array_idx_.size());
+  large_binary_array_empirical_size_.resize(large_binary_array_idx_.size());
   for (auto i = 0; i < num_fixed_width; ++i) {
     partition_fixed_width_validity_addrs_[i].resize(num_partitions_);
     partition_fixed_width_value_addrs_[i].resize(num_partitions_);
@@ -433,6 +435,10 @@ arrow::Status Splitter::CacheRecordBatchAndReset(int32_t partition_id) {
 arrow::Status Splitter::AllocatePartitionBuffers(int32_t partition_id, int32_t new_size) {
   // try to allocate new
   auto num_fields = schema_->num_fields();
+  auto fixed_width_idx = 0;
+  auto binary_idx = 0;
+  auto large_binary_idx = 0;
+
   std::vector<std::shared_ptr<arrow::BinaryBuilder>> new_binary_builders;
   std::vector<std::shared_ptr<arrow::LargeBinaryBuilder>> new_large_binary_builders;
   std::vector<std::shared_ptr<arrow::ResizableBuffer>> new_value_buffers;
@@ -441,13 +447,19 @@ arrow::Status Splitter::AllocatePartitionBuffers(int32_t partition_id, int32_t n
       case Type::SHUFFLE_BINARY: {
         auto builder = std::make_shared<arrow::BinaryBuilder>(options_.memory_pool);
         RETURN_NOT_OK(builder->Reserve(new_size));
+        RETURN_NOT_OK(
+            builder->ReserveData(binary_array_empirical_size_[binary_idx] * new_size));
         new_binary_builders.push_back(std::move(builder));
+        binary_idx++;
         break;
       }
       case Type::SHUFFLE_LARGE_BINARY: {
         auto builder = std::make_shared<arrow::LargeBinaryBuilder>(options_.memory_pool);
         RETURN_NOT_OK(builder->Reserve(new_size));
+        RETURN_NOT_OK(builder->ReserveData(
+            large_binary_array_empirical_size_[large_binary_idx] * new_size));
         new_large_binary_builders.push_back(std::move(builder));
+        large_binary_idx++;
         break;
       }
       case Type::SHUFFLE_NULL:
@@ -471,9 +483,7 @@ arrow::Status Splitter::AllocatePartitionBuffers(int32_t partition_id, int32_t n
   }
 
   // point to newly allocated buffers
-  auto fixed_width_idx = 0;
-  auto binary_idx = 0;
-  auto large_binary_idx = 0;
+  fixed_width_idx = binary_idx = large_binary_idx = 0;
   for (auto i = 0; i < num_fields; ++i) {
     switch (column_type_id_[i]) {
       case Type::SHUFFLE_BINARY:
@@ -545,6 +555,24 @@ arrow::Result<int32_t> Splitter::SpillLargestPartition() {
 }
 
 arrow::Status Splitter::DoSplit(const arrow::RecordBatch& rb) {
+  // scan binary arrays and large binary arrays to get empirical sizes
+  if (!empirical_size_calculated_) {
+    auto num_rows = rb.num_rows();
+    for (int i = 0; i < binary_array_idx_.size(); ++i) {
+      auto arr =
+          std::static_pointer_cast<arrow::BinaryArray>(rb.column(binary_array_idx_[i]));
+      auto length = arr->value_offset(num_rows) - arr->value_offset(0);
+      binary_array_empirical_size_[i] = length / num_rows;
+    }
+    for (int i = 0; i < large_binary_array_idx_.size(); ++i) {
+      auto arr = std::static_pointer_cast<arrow::LargeBinaryArray>(
+          rb.column(large_binary_array_idx_[i]));
+      auto length = arr->value_offset(num_rows) - arr->value_offset(0);
+      large_binary_array_empirical_size_[i] = length / num_rows;
+    }
+    empirical_size_calculated_ = true;
+  }
+
   // prepare partition buffers and spill if necessary
   for (auto pid = 0; pid < num_partitions_; ++pid) {
     if (partition_id_cnt_[pid] > 0 &&
@@ -884,16 +912,20 @@ arrow::Status Splitter::AppendBinary(
     for (auto row = 0; row < num_rows; ++row) {
       offset_type length;
       auto value = src_arr->GetValue(row, &length);
-      RETURN_NOT_OK(dst_builders[partition_id_[row]]->Append(value, length));
+      const auto& builder = dst_builders[partition_id_[row]];
+      RETURN_NOT_OK(builder->ReserveData(length));
+      builder->UnsafeAppend(value, length);
     }
   } else {
     for (auto row = 0; row < num_rows; ++row) {
       if (src_arr->IsValid(row)) {
         offset_type length;
         auto value = src_arr->GetValue(row, &length);
-        RETURN_NOT_OK(dst_builders[partition_id_[row]]->Append(value, length));
+        const auto& builder = dst_builders[partition_id_[row]];
+        RETURN_NOT_OK(builder->ReserveData(length));
+        builder->UnsafeAppend(value, length);
       } else {
-        RETURN_NOT_OK(dst_builders[partition_id_[row]]->AppendNull());
+        dst_builders[partition_id_[row]]->UnsafeAppendNull();
       }
     }
   }
