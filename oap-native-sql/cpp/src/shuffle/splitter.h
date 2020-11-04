@@ -140,6 +140,10 @@ class Splitter {
   std::vector<int32_t> binary_array_idx_;
   std::vector<int32_t> large_binary_array_idx_;
 
+  bool empirical_size_calculated_ = false;
+  std::vector<int32_t> binary_array_empirical_size_;
+  std::vector<int32_t> large_binary_array_empirical_size_;
+
   // updated for each input record batch
   std::vector<int32_t> partition_id_;
   std::vector<int32_t> partition_id_cnt_;
