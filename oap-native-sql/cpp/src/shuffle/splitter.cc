@@ -124,16 +124,20 @@ inline void PrefetchDstAddr(__m512i dst_addr_8x, int32_t scale) {
 
 class Splitter::PartitionWriter {
  public:
-  explicit PartitionWriter(Splitter* splitter) : splitter_(splitter) {}
+  explicit PartitionWriter(Splitter* splitter, int32_t partition_id)
+      : splitter_(splitter), partition_id_(partition_id) {}
 
-  arrow::Status Spill(const std::shared_ptr<arrow::RecordBatch>& batch) {
+  arrow::Status Spill() {
     RETURN_NOT_OK(EnsureOpened());
-    TIME_NANO_OR_RAISE(spill_time, spilled_file_writer_->WriteRecordBatch(*batch));
+    for (auto& batch : splitter_->partition_cached_recordbatch_[partition_id_]) {
+      TIME_NANO_OR_RAISE(spill_time, spilled_file_writer_->WriteRecordBatch(*batch));
+      batch = nullptr;
+    }
+    ClearCache();
     return arrow::Status::OK();
   }
 
-  arrow::Status WriteLastRecordBatchAndClose(
-      const std::shared_ptr<arrow::RecordBatch>& batch) {
+  arrow::Status WriteCachedRecordBatchAndClose() {
     auto start_write = std::chrono::steady_clock::now();
     const auto& data_file_os = splitter_->data_file_os_;
     ARROW_ASSIGN_OR_RAISE(auto before_write, data_file_os->Tell());
@@ -154,32 +158,36 @@ class Splitter::PartitionWriter {
       RETURN_NOT_OK(fs->DeleteFile(spilled_file_));
       bytes_spilled += nbytes;
 
-      // write last record batch if it's not null
-      if (batch != nullptr) {
+      // write cached recordbatch
+      for (auto& batch : splitter_->partition_cached_recordbatch_[partition_id_]) {
         int32_t metadata_length;
         int64_t body_length;
         RETURN_NOT_OK(arrow::ipc::WriteRecordBatch(
             *batch, 0, data_file_os.get(), &metadata_length, &body_length,
             SplitterIpcWriteOptions(splitter_->options_.compression_type)));
+        batch = nullptr;
       }
       // write EOS
       constexpr int32_t kZeroLength = 0;
       RETURN_NOT_OK(data_file_os->Write(&kIpcContinuationToken, sizeof(int32_t)));
       RETURN_NOT_OK(data_file_os->Write(&kZeroLength, sizeof(int32_t)));
     } else {
+      if (splitter_->partition_cached_recordbatch_size_[partition_id_] == 0) {
+        return arrow::Status::Invalid("Partition writer got empty partition");
+      }
       ARROW_ASSIGN_OR_RAISE(
           auto data_file_writer,
           arrow::ipc::NewStreamWriter(
               data_file_os.get(), splitter_->schema_,
               SplitterIpcWriteOptions(splitter_->options_.compression_type)));
-      // write last record batch, it is the only batch to write so it can't be null
-      if (batch == nullptr) {
-        return arrow::Status::Invalid("Partition writer got empty partition");
+      for (auto& batch : splitter_->partition_cached_recordbatch_[partition_id_]) {
+        RETURN_NOT_OK(data_file_writer->WriteRecordBatch(*batch));
+        batch = nullptr;
       }
-      RETURN_NOT_OK(data_file_writer->WriteRecordBatch(*batch));
       // write EOS
       RETURN_NOT_OK(data_file_writer->Close());
     }
+    ClearCache();
 
     ARROW_ASSIGN_OR_RAISE(auto after_write, data_file_os->Tell());
     partition_length = after_write - before_write;
@@ -188,7 +196,6 @@ class Splitter::PartitionWriter {
     write_time =
         std::chrono::duration_cast<std::chrono::nanoseconds>(end_write - start_write)
             .count();
-
     return arrow::Status::OK();
   }
 
@@ -215,7 +222,13 @@ class Splitter::PartitionWriter {
     return arrow::Status::OK();
   }
 
+  void ClearCache() {
+    splitter_->partition_cached_recordbatch_[partition_id_].clear();
+    splitter_->partition_cached_recordbatch_size_[partition_id_] = 0;
+  }
+
   Splitter* splitter_;
+  int32_t partition_id_;
   std::string spilled_file_;
   std::shared_ptr<arrow::io::FileOutputStream> spilled_file_os_;
   std::shared_ptr<arrow::ipc::RecordBatchWriter> spilled_file_writer_;
@@ -261,7 +274,9 @@ arrow::Status Splitter::Init() {
   partition_buffer_size_.resize(num_partitions_);
   partition_buffer_idx_base_.resize(num_partitions_);
   partition_buffer_idx_offset_.resize(num_partitions_);
-  partition_lengths_.reserve(num_partitions_);
+  partition_cached_recordbatch_.resize(num_partitions_);
+  partition_cached_recordbatch_size_.resize(num_partitions_);
+  partition_lengths_.resize(num_partitions_);
 
   for (int i = 0; i < column_type_id_.size(); ++i) {
     switch (column_type_id_[i]) {
@@ -325,22 +340,22 @@ arrow::Status Splitter::Stop() {
 
   // stop PartitionWriter and collect metrics
   for (auto pid = 0; pid < num_partitions_; ++pid) {
-    if (partition_buffer_idx_base_[pid] > 0) {
+    RETURN_NOT_OK(CacheRecordBatchAndReset(pid));
+    if (partition_cached_recordbatch_size_[pid] > 0) {
       if (partition_writer_[pid] == nullptr) {
-        partition_writer_[pid] = std::make_shared<PartitionWriter>(this);
+        partition_writer_[pid] = std::make_shared<PartitionWriter>(this, pid);
       }
-      ARROW_ASSIGN_OR_RAISE(auto batch, MakeRecordBatchAndReset(pid));
-      RETURN_NOT_OK(partition_writer_[pid]->WriteLastRecordBatchAndClose(batch));
     }
     if (partition_writer_[pid] != nullptr) {
+      RETURN_NOT_OK(partition_writer_[pid]->WriteCachedRecordBatchAndClose());
       const auto& writer = partition_writer_[pid];
-      partition_lengths_.push_back(writer->partition_length);
+      partition_lengths_[pid] = writer->partition_length;
       total_bytes_written_ += writer->partition_length;
       total_bytes_spilled_ += writer->bytes_spilled;
       total_write_time_ += writer->write_time;
       total_spill_time_ += writer->spill_time;
     } else {
-      partition_lengths_.push_back(0);
+      partition_lengths_[pid] = 0;
     }
   }
 
@@ -351,137 +366,203 @@ arrow::Status Splitter::Stop() {
   return arrow::Status::OK();
 }
 
-arrow::Status Splitter::AllocatePartitionBuffers(int32_t partition_id, int32_t new_size) {
-  auto fixed_width_idx = 0;
-  auto binary_idx = 0;
-  auto large_binary_idx = 0;
-  auto num_fields = schema_->num_fields();
-  if (partition_buffer_size_[partition_id] > 0) {
-    // resize fixed width buffers
-    for (auto i = 0; i < num_fields; ++i) {
+arrow::Status Splitter::CacheRecordBatchAndReset(int32_t partition_id) {
+  if (partition_buffer_idx_base_[partition_id] > 0) {
+    auto fixed_width_idx = 0;
+    auto binary_idx = 0;
+    auto large_binary_idx = 0;
+    auto num_fields = schema_->num_fields();
+    auto num_rows = partition_buffer_idx_base_[partition_id];
+    auto estimated_buffer_size = 0;
+    std::vector<std::shared_ptr<arrow::Array>> arrays(num_fields);
+    for (int i = 0; i < num_fields; ++i) {
       switch (column_type_id_[i]) {
-        case Type::SHUFFLE_BINARY:
-        case Type::SHUFFLE_LARGE_BINARY:
-        case Type::SHUFFLE_NULL:
+        case Type::SHUFFLE_BINARY: {
+          RETURN_NOT_OK(
+              partition_binary_builders_[binary_idx][partition_id]->Finish(&arrays[i]));
+          const auto& buffers = arrays[i]->data()->buffers;
+          if (buffers[0] != nullptr) {
+            estimated_buffer_size += buffers[0]->size();
+          }
+          estimated_buffer_size += (buffers[1]->size() + buffers[2]->size());
+          binary_idx++;
           break;
+        }
+        case Type::SHUFFLE_LARGE_BINARY: {
+          RETURN_NOT_OK(
+              partition_large_binary_builders_[large_binary_idx][partition_id]->Finish(
+                  &arrays[i]));
+          const auto& buffers = arrays[i]->data()->buffers;
+          if (buffers[0] != nullptr) {
+            estimated_buffer_size += buffers[0]->size();
+          }
+          estimated_buffer_size += (buffers[1]->size() + buffers[2]->size());
+          large_binary_idx++;
+          break;
+        }
+        case Type::SHUFFLE_NULL: {
+          arrays[i] = arrow::MakeArray(arrow::ArrayData::Make(
+              arrow::null(), num_rows, {nullptr, nullptr}, num_rows));
+          break;
+        }
         default: {
           auto& buffers = partition_fixed_width_buffers_[fixed_width_idx][partition_id];
           if (buffers[0] != nullptr) {
-            RETURN_NOT_OK(buffers[0]->Resize(arrow::BitUtil::BytesForBits(new_size)));
-            partition_fixed_width_validity_addrs_[fixed_width_idx][partition_id] =
-                const_cast<uint8_t*>(buffers[0]->data());
+            estimated_buffer_size += buffers[0]->size();
           }
-          if (column_type_id_[i] == Type::SHUFFLE_BIT) {
-            RETURN_NOT_OK(buffers[1]->Resize(arrow::BitUtil::BytesForBits(new_size)));
-          } else {
-            RETURN_NOT_OK(buffers[1]->Resize(new_size * (1 << column_type_id_[i])));
-          }
-          partition_fixed_width_value_addrs_[fixed_width_idx][partition_id] =
-              const_cast<uint8_t*>(buffers[1]->data());
+          estimated_buffer_size += buffers[1]->size();
+          arrays[i] = arrow::MakeArray(
+              arrow::ArrayData::Make(schema_->field(i)->type(), num_rows,
+                                     {std::move(buffers[0]), std::move(buffers[1])}));
+          buffers = {nullptr, nullptr};
+          partition_fixed_width_validity_addrs_[fixed_width_idx][partition_id] = nullptr;
+          partition_fixed_width_value_addrs_[fixed_width_idx][partition_id] = nullptr;
           fixed_width_idx++;
           break;
         }
       }
     }
-  } else {
-    for (auto i = 0; i < num_fields; ++i) {
-      switch (column_type_id_[i]) {
-        case Type::SHUFFLE_BINARY:
-          partition_binary_builders_[binary_idx++][partition_id] =
-              std::make_shared<arrow::BinaryBuilder>(options_.memory_pool);
-          break;
-        case Type::SHUFFLE_LARGE_BINARY:
-          partition_large_binary_builders_[large_binary_idx++][partition_id] =
-              std::make_shared<arrow::LargeBinaryBuilder>(options_.memory_pool);
-          break;
-        case Type::SHUFFLE_NULL:
-          break;
-        default:
-          std::shared_ptr<arrow::ResizableBuffer> value_buffer;
-          // only allocate for value buffer
-          if (column_type_id_[i] == Type::SHUFFLE_BIT) {
-            ARROW_ASSIGN_OR_RAISE(
-                value_buffer,
-                arrow::AllocateResizableBuffer(arrow::BitUtil::BytesForBits(new_size),
-                                               options_.memory_pool));
-          } else {
-            ARROW_ASSIGN_OR_RAISE(value_buffer, arrow::AllocateResizableBuffer(
-                                                    new_size * (1 << column_type_id_[i]),
-                                                    options_.memory_pool))
-          }
-          partition_fixed_width_value_addrs_[fixed_width_idx][partition_id] =
-              const_cast<uint8_t*>(value_buffer->data());
-          partition_fixed_width_buffers_[fixed_width_idx++][partition_id] = {
-              nullptr, std::move(value_buffer)};
+    auto batch = arrow::RecordBatch::Make(schema_, num_rows, std::move(arrays));
+    partition_cached_recordbatch_[partition_id].push_back(std::move(batch));
+    partition_cached_recordbatch_size_[partition_id] += estimated_buffer_size;
+    partition_buffer_idx_base_[partition_id] = 0;
+  }
+  return arrow::Status::OK();
+}
+
+arrow::Status Splitter::AllocatePartitionBuffers(int32_t partition_id, int32_t new_size) {
+  // try to allocate new
+  auto num_fields = schema_->num_fields();
+  std::vector<std::shared_ptr<arrow::BinaryBuilder>> new_binary_builders;
+  std::vector<std::shared_ptr<arrow::LargeBinaryBuilder>> new_large_binary_builders;
+  std::vector<std::shared_ptr<arrow::ResizableBuffer>> new_value_buffers;
+  for (auto i = 0; i < num_fields; ++i) {
+    switch (column_type_id_[i]) {
+      case Type::SHUFFLE_BINARY: {
+        auto builder = std::make_shared<arrow::BinaryBuilder>(options_.memory_pool);
+        RETURN_NOT_OK(builder->Reserve(new_size));
+        new_binary_builders.push_back(std::move(builder));
+        break;
       }
+      case Type::SHUFFLE_LARGE_BINARY: {
+        auto builder = std::make_shared<arrow::LargeBinaryBuilder>(options_.memory_pool);
+        RETURN_NOT_OK(builder->Reserve(new_size));
+        new_large_binary_builders.push_back(std::move(builder));
+        break;
+      }
+      case Type::SHUFFLE_NULL:
+        break;
+      default: {
+        // only allocate for value buffer
+        std::shared_ptr<arrow::ResizableBuffer> value_buffer;
+        if (column_type_id_[i] == Type::SHUFFLE_BIT) {
+          ARROW_ASSIGN_OR_RAISE(value_buffer, arrow::AllocateResizableBuffer(
+                                                  arrow::BitUtil::BytesForBits(new_size),
+                                                  options_.memory_pool));
+        } else {
+          ARROW_ASSIGN_OR_RAISE(value_buffer, arrow::AllocateResizableBuffer(
+                                                  new_size * (1 << column_type_id_[i]),
+                                                  options_.memory_pool));
+        }
+        new_value_buffers.push_back(std::move(value_buffer));
+        break;
+      }
+    }
+  }
+
+  // point to newly allocated buffers
+  auto fixed_width_idx = 0;
+  auto binary_idx = 0;
+  auto large_binary_idx = 0;
+  for (auto i = 0; i < num_fields; ++i) {
+    switch (column_type_id_[i]) {
+      case Type::SHUFFLE_BINARY:
+        partition_binary_builders_[binary_idx][partition_id] =
+            std::move(new_binary_builders[binary_idx]);
+        binary_idx++;
+        break;
+      case Type::SHUFFLE_LARGE_BINARY:
+        partition_large_binary_builders_[large_binary_idx][partition_id] =
+            std::move(new_large_binary_builders[large_binary_idx]);
+        large_binary_idx++;
+        break;
+      case Type::SHUFFLE_NULL:
+        break;
+      default:
+        partition_fixed_width_validity_addrs_[fixed_width_idx][partition_id] = nullptr;
+        partition_fixed_width_value_addrs_[fixed_width_idx][partition_id] =
+            const_cast<uint8_t*>(new_value_buffers[fixed_width_idx]->data());
+        partition_fixed_width_buffers_[fixed_width_idx][partition_id] = {
+            nullptr, std::move(new_value_buffers[fixed_width_idx])};
+        fixed_width_idx++;
+        break;
     }
   }
   partition_buffer_size_[partition_id] = new_size;
   return arrow::Status::OK();
 }
 
-arrow::Result<std::shared_ptr<arrow::RecordBatch>> Splitter::MakeRecordBatchAndReset(
-    int32_t partition_id) {
-  auto fixed_width_idx = 0;
-  auto binary_idx = 0;
-  auto large_binary_idx = 0;
-  auto num_fields = schema_->num_fields();
-  auto num_rows = partition_buffer_idx_base_[partition_id];
-  std::vector<std::shared_ptr<arrow::Array>> arrays(num_fields);
-  for (int i = 0; i < num_fields; ++i) {
-    switch (column_type_id_[i]) {
-      case Type::SHUFFLE_BINARY:
-        RETURN_NOT_OK(
-            partition_binary_builders_[binary_idx++][partition_id]->Finish(&arrays[i]));
-        break;
-      case Type::SHUFFLE_LARGE_BINARY:
-        RETURN_NOT_OK(
-            partition_large_binary_builders_[large_binary_idx++][partition_id]->Finish(
-                &arrays[i]));
-        break;
-      case Type::SHUFFLE_NULL:
-        arrays[i] = arrow::MakeArray(arrow::ArrayData::Make(
-            arrow::null(), num_rows, {nullptr, nullptr}, num_rows));
-        break;
-      default:
-        arrays[i] = arrow::MakeArray(arrow::ArrayData::Make(
-            schema_->field(i)->type(), num_rows,
-            {partition_fixed_width_buffers_[fixed_width_idx][partition_id][0],
-             partition_fixed_width_buffers_[fixed_width_idx][partition_id][1]}));
-        partition_fixed_width_validity_addrs_[fixed_width_idx][partition_id] = nullptr;
-        partition_fixed_width_buffers_[fixed_width_idx++][partition_id][0] = nullptr;
-        break;
+arrow::Status Splitter::AllocateNew(int32_t partition_id, int32_t new_size) {
+  auto status = AllocatePartitionBuffers(partition_id, new_size);
+  int32_t retry = 0;
+  while (status.IsOutOfMemory()) {
+    // retry allocate
+    std::cout << std::to_string(++retry) << " retry to allocate new buffer for partition "
+              << std::to_string(partition_id) << std::endl;
+    ARROW_ASSIGN_OR_RAISE(auto partition_to_spill, SpillLargestPartition());
+    if (partition_to_spill == -1) {
+      std::cout << "Failed to allocate new buffer for partition "
+                << std::to_string(partition_id) << ". Out of memory." << std::endl;
+      return status;
+    }
+    status = AllocatePartitionBuffers(partition_id, new_size);
+  }
+  return status;
+}
+
+arrow::Result<int32_t> Splitter::SpillLargestPartition() {
+  // spill the largest partition
+  auto max_size = 0;
+  int32_t partition_to_spill = -1;
+  for (auto i = 0; i < num_partitions_; ++i) {
+    if (partition_cached_recordbatch_size_[i] > max_size) {
+      max_size = partition_cached_recordbatch_size_[i];
+      partition_to_spill = i;
     }
   }
-  partition_buffer_idx_base_[partition_id] = 0;
-  return arrow::RecordBatch::Make(schema_, num_rows, std::move(arrays));
+  if (partition_to_spill != -1) {
+    if (partition_writer_[partition_to_spill] == nullptr) {
+      partition_writer_[partition_to_spill] =
+          std::make_shared<PartitionWriter>(this, partition_to_spill);
+    }
+    RETURN_NOT_OK(partition_writer_[partition_to_spill]->Spill());
+#ifdef DEBUG
+    std::cout << "Spilled partition " << std::to_string(partition_to_spill)
+              << ". Released " << std::to_string(max_size) << " bytes." << std::endl;
+#endif
+  }
+  return partition_to_spill;
 }
 
 arrow::Status Splitter::DoSplit(const arrow::RecordBatch& rb) {
   // prepare partition buffers and spill if necessary
   for (auto pid = 0; pid < num_partitions_; ++pid) {
-    if (partition_id_cnt_[pid] > partition_buffer_size_[pid]) {
-      // spill and reallocate
+    if (partition_id_cnt_[pid] > 0 &&
+        partition_buffer_idx_base_[pid] + partition_id_cnt_[pid] >
+            partition_buffer_size_[pid]) {
+      RETURN_NOT_OK(CacheRecordBatchAndReset(pid));
       auto new_size = partition_id_cnt_[pid] > options_.buffer_size
                           ? partition_id_cnt_[pid]
                           : options_.buffer_size;
-      if (partition_buffer_size_[pid] != 0) {
 #ifdef DEBUG
-        std::cout << "Attempt to reallocate partition buffer for partition id: " +
-                         std::to_string(pid) + ", old buffer size: " +
-                         std::to_string(partition_buffer_size_[pid]) +
-                         ", new buffer size: " + std::to_string(new_size) +
-                         ", input record batch size: " + std::to_string(rb.num_rows())
-                  << std::endl;
+      std::cout << "Attempt to allocate partition buffer, partition id: " +
+                       std::to_string(pid) + ", last buffer size: " +
+                       std::to_string(partition_buffer_size_[pid]) +
+                       ", new buffer size: " + std::to_string(new_size) +
+                       ", input record batch size: " + std::to_string(rb.num_rows())
+                << std::endl;
 #endif
-        RETURN_NOT_OK(SpillPartition(pid));
-      }
-      RETURN_NOT_OK(AllocatePartitionBuffers(pid, new_size));
-    } else if (partition_id_cnt_[pid] > 0 &&
-               partition_buffer_idx_base_[pid] + partition_id_cnt_[pid] >
-                   partition_buffer_size_[pid]) {
-      // if this partition size exceed dst buffer limitation, spill the partition
-      RETURN_NOT_OK(SpillPartition(pid));
+      RETURN_NOT_OK(AllocateNew(pid, new_size));
     }
   }
 
@@ -499,14 +580,6 @@ arrow::Status Splitter::DoSplit(const arrow::RecordBatch& rb) {
     partition_buffer_idx_base_[pid] += partition_id_cnt_[pid];
   }
   return arrow::Status::OK();
-}  // namespace shuffle
-
-arrow::Status Splitter::SpillPartition(int32_t partition_id) {
-  if (partition_writer_[partition_id] == nullptr) {
-    partition_writer_[partition_id] = std::make_shared<PartitionWriter>(this);
-  }
-  ARROW_ASSIGN_OR_RAISE(auto batch, MakeRecordBatchAndReset(partition_id));
-  return partition_writer_[partition_id]->Spill(batch);
 }
 
 arrow::Status Splitter::SplitFixedWidthValueBuffer(const arrow::RecordBatch& rb) {
