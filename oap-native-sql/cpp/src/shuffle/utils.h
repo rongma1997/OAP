@@ -113,14 +113,6 @@ static arrow::Result<std::string> CreateTempShuffleFile(const std::string& dir) 
   return file_path;
 }
 
-static arrow::ipc::IpcWriteOptions SplitterIpcWriteOptions(
-    arrow::Compression::type compression) {
-  auto options = arrow::ipc::IpcWriteOptions::Defaults();
-  options.compression = compression;
-  options.use_threads = false;
-  return options;
-}
-
 static arrow::Result<std::vector<Type::typeId>> ToSplitterTypeId(
     const std::vector<std::shared_ptr<arrow::Field>>& fields) {
   std::vector<Type::typeId> splitter_type_id;

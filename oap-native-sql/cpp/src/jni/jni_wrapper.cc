@@ -1440,7 +1440,7 @@ JNIEXPORT void JNICALL Java_com_intel_oap_vectorized_ShuffleSplitterJniWrapper_s
   jlong* in_buf_sizes = env->GetLongArrayElements(buf_sizes, JNI_FALSE);
 
   std::shared_ptr<arrow::RecordBatch> in;
-  auto status = MakeRecordBatch(splitter->schema(), num_rows, (int64_t*)in_buf_addrs,
+  auto status = MakeRecordBatch(splitter->input_schema(), num_rows, (int64_t*)in_buf_addrs,
                                 (int64_t*)in_buf_sizes, in_bufs_len, &in);
 
   env->ReleaseLongArrayElements(buf_addrs, in_buf_addrs, JNI_ABORT);

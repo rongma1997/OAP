@@ -45,17 +45,25 @@ class Splitter {
       const std::string& short_name, std::shared_ptr<arrow::Schema> schema,
       int num_partitions, SplitOptions options = SplitOptions::Defaults());
 
-  virtual const std::shared_ptr<arrow::Schema>& schema() const { return schema_; }
+  virtual const std::shared_ptr<arrow::Schema>& input_schema() const { return schema_; }
 
+  /***
+   * Split input record batch into partition buffers according to the computed partition
+   * id. The largest partition buffer will be spilled if memory allocation failure occurs.
+   */
   virtual arrow::Status Split(const arrow::RecordBatch&);
 
   /***
-   * Stop all writers created by this splitter. If the data buffer managed by the writer
-   * is not empty, write to output stream as RecordBatch. Then sort the temporary files by
-   * partition id.
-   * @return
+   * For each partition, merge spilled file into shuffle data file and write any cached
+   * record batch to shuffle data file. Close all resources and collect metrics.
    */
   arrow::Status Stop();
+
+  /***
+   * Spill the largest partition buffer
+   * @return partition id. If no partition to spill, return -1
+   */
+  arrow::Result<int32_t> SpillLargestPartition();
 
   int64_t TotalBytesWritten() const { return total_bytes_written_; }
 
@@ -113,9 +121,6 @@ class Splitter {
   // Allocate new partition buffers/builders. May return OOM status.
   arrow::Status AllocatePartitionBuffers(int32_t partition_id, int32_t new_size);
 
-  // Spill the largest partition, return partition id. If no partition to spill, return -1
-  arrow::Result<int32_t> SpillLargestPartition();
-
   std::string NextSpilledFileDir();
 
   class PartitionWriter;
@@ -132,7 +137,7 @@ class Splitter {
       partition_binary_builders_;
   std::vector<std::vector<std::shared_ptr<arrow::LargeBinaryBuilder>>>
       partition_large_binary_builders_;
-  std::vector<std::vector<std::shared_ptr<arrow::RecordBatch>>>
+  std::vector<std::vector<std::shared_ptr<arrow::ipc::internal::IpcPayload>>>
       partition_cached_recordbatch_;
   std::vector<int64_t> partition_cached_recordbatch_size_;  // in bytes
 
@@ -211,7 +216,7 @@ class FallbackRangeSplitter : public Splitter {
 
   arrow::Status Split(const arrow::RecordBatch& rb) override;
 
-  const std::shared_ptr<arrow::Schema>& schema() const override { return input_schema_; }
+  const std::shared_ptr<arrow::Schema>& input_schema() const override { return input_schema_; }
 
  private:
   FallbackRangeSplitter(int32_t num_partitions, std::shared_ptr<arrow::Schema> schema,
