@@ -141,7 +141,6 @@ class Splitter::PartitionWriter {
   }
 
   arrow::Status WriteCachedRecordBatchAndClose() {
-    auto start_write = std::chrono::steady_clock::now();
     const auto& data_file_os = splitter_->data_file_os_;
     ARROW_ASSIGN_OR_RAISE(auto before_write, data_file_os->Tell());
 
@@ -173,16 +172,10 @@ class Splitter::PartitionWriter {
     ARROW_ASSIGN_OR_RAISE(auto after_write, data_file_os->Tell());
     partition_length = after_write - before_write;
 
-    auto end_write = std::chrono::steady_clock::now();
-    write_time =
-        std::chrono::duration_cast<std::chrono::nanoseconds>(end_write - start_write)
-            .count();
     return arrow::Status::OK();
   }
 
   // metrics
-  int64_t spill_time = 0;
-  int64_t write_time = 0;
   int64_t bytes_spilled = 0;
   int64_t partition_length = 0;
 
@@ -362,13 +355,12 @@ arrow::Status Splitter::Stop() {
       }
     }
     if (partition_writer_[pid] != nullptr) {
-      RETURN_NOT_OK(partition_writer_[pid]->WriteCachedRecordBatchAndClose());
+      TIME_NANO_OR_RAISE(total_write_time_,
+                         partition_writer_[pid]->WriteCachedRecordBatchAndClose());
       const auto& writer = partition_writer_[pid];
       partition_lengths_[pid] = writer->partition_length;
       total_bytes_written_ += writer->partition_length;
       total_bytes_spilled_ += writer->bytes_spilled;
-      total_write_time_ += writer->write_time;
-      total_spill_time_ += writer->spill_time;
     } else {
       partition_lengths_[pid] = 0;
     }
@@ -424,8 +416,9 @@ arrow::Status Splitter::CacheRecordBatchAndReset(int32_t partition_id) {
     }
     auto batch = arrow::RecordBatch::Make(schema_, num_rows, std::move(arrays));
     auto payload = std::make_shared<arrow::ipc::internal::IpcPayload>();
-    RETURN_NOT_OK(arrow::ipc::internal::GetRecordBatchPayload(
-        *batch, options_.ipc_write_options, payload.get()));
+    TIME_NANO_OR_RAISE(total_compress_time_,
+                       arrow::ipc::internal::GetRecordBatchPayload(
+                           *batch, options_.ipc_write_options, payload.get()));
 
     partition_cached_recordbatch_size_[partition_id] += payload->body_length;
     partition_cached_recordbatch_[partition_id].push_back(std::move(payload));
@@ -551,7 +544,7 @@ arrow::Result<int32_t> Splitter::SpillLargestPartition() {
       partition_writer_[partition_to_spill] =
           std::make_shared<PartitionWriter>(this, partition_to_spill);
     }
-    RETURN_NOT_OK(partition_writer_[partition_to_spill]->Spill());
+    TIME_NANO_OR_RAISE(total_spill_time_, partition_writer_[partition_to_spill]->Spill());
 #ifdef DEBUG
     std::cout << "Spilled partition " << std::to_string(partition_to_spill) << ". "
               << std::to_string(max_size) << " bytes released." << std::endl;

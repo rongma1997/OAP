@@ -121,8 +121,9 @@ class ColumnarShuffleWriter[K, V](
     splitResult = jniWrapper.stop(nativeSplitter)
 
     dep.splitTime.add(System
-      .nanoTime() - startTime - splitResult.getTotalSpillTime - splitResult.getTotalWriteTime - splitResult.getTotalComputePidTime)
+      .nanoTime() - startTime - splitResult.getTotalSpillTime - splitResult.getTotalWriteTime - splitResult.getTotalComputePidTime - splitResult.getTotalSpillTime)
     dep.spillTime.add(splitResult.getTotalSpillTime)
+    dep.compressTime.add(splitResult.getTotalCompressTime)
     dep.computePidTime.add(splitResult.getTotalComputePidTime)
     dep.bytesSpilled.add(splitResult.getTotalBytesSpilled)
     writeMetrics.incBytesWritten(splitResult.getTotalBytesWritten)

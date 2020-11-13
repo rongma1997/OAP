@@ -262,7 +262,7 @@ jint JNI_OnLoad(JavaVM* vm, void* reserved) {
 
   split_result_class =
       CreateGlobalClassReference(env, "Lcom/intel/oap/vectorized/SplitResult;");
-  split_result_constructor = GetMethodID(env, split_result_class, "<init>", "(JJJJJ[J)V");
+  split_result_constructor = GetMethodID(env, split_result_class, "<init>", "(JJJJJJ[J)V");
 
 
   native_memory_reservation_class =
@@ -1492,7 +1492,7 @@ JNIEXPORT jobject JNICALL Java_com_intel_oap_vectorized_ShuffleSplitterJniWrappe
   env->SetLongArrayRegion(partition_length_arr, 0, partition_length.size(), src);
   jobject split_result = env->NewObject(
       split_result_class, split_result_constructor, splitter->TotalComputePidTime(),
-      splitter->TotalWriteTime(), splitter->TotalSpillTime(),
+      splitter->TotalWriteTime(), splitter->TotalSpillTime(), splitter->TotalCompressTime(),
       splitter->TotalBytesWritten(), splitter->TotalBytesSpilled(), partition_length_arr);
 
   return split_result;

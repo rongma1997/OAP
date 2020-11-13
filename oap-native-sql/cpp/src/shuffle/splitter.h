@@ -47,19 +47,19 @@ class Splitter {
 
   virtual const std::shared_ptr<arrow::Schema>& input_schema() const { return schema_; }
 
-  /***
+  /**
    * Split input record batch into partition buffers according to the computed partition
    * id. The largest partition buffer will be spilled if memory allocation failure occurs.
    */
   virtual arrow::Status Split(const arrow::RecordBatch&);
 
-  /***
+  /**
    * For each partition, merge spilled file into shuffle data file and write any cached
    * record batch to shuffle data file. Close all resources and collect metrics.
    */
   arrow::Status Stop();
 
-  /***
+  /**
    * Spill the largest partition buffer
    * @return partition id. If no partition to spill, return -1
    */
@@ -72,6 +72,8 @@ class Splitter {
   int64_t TotalWriteTime() const { return total_write_time_; }
 
   int64_t TotalSpillTime() const { return total_spill_time_; }
+
+  int64_t TotalCompressTime() const { return total_compress_time_; }
 
   int64_t TotalComputePidTime() const { return total_compute_pid_time_; }
 
@@ -111,14 +113,16 @@ class Splitter {
       const std::shared_ptr<ArrayType>& src_arr,
       const std::vector<std::shared_ptr<BuilderType>>& dst_builders, int64_t num_rows);
 
+  // Cache the partition buffer/builder as compressed record batch. The partition
+  // buffer/builder will be set to nullptr
   arrow::Status CacheRecordBatchAndReset(int32_t partition_id);
 
-  // Allocate new partition buffers/builders.
-  // If successful, will point partition buffers/builders to new ones, otherwise will
-  // spill the largest partition and retry allocate until no partition to spill.
+  // Allocate new partition buffer/builder.
+  // If successful, will point partition buffer/builder to new ones, otherwise will
+  // spill the largest partition and retry
   arrow::Status AllocateNew(int32_t partition_id, int32_t new_size);
 
-  // Allocate new partition buffers/builders. May return OOM status.
+  // Allocate new partition buffer/builder. May return OOM status.
   arrow::Status AllocatePartitionBuffers(int32_t partition_id, int32_t new_size);
 
   std::string NextSpilledFileDir();
@@ -161,6 +165,7 @@ class Splitter {
   int64_t total_bytes_spilled_ = 0;
   int64_t total_write_time_ = 0;
   int64_t total_spill_time_ = 0;
+  int64_t total_compress_time_ = 0;
   int64_t total_compute_pid_time_ = 0;
   std::vector<int64_t> partition_lengths_;
 
@@ -216,7 +221,9 @@ class FallbackRangeSplitter : public Splitter {
 
   arrow::Status Split(const arrow::RecordBatch& rb) override;
 
-  const std::shared_ptr<arrow::Schema>& input_schema() const override { return input_schema_; }
+  const std::shared_ptr<arrow::Schema>& input_schema() const override {
+    return input_schema_;
+  }
 
  private:
   FallbackRangeSplitter(int32_t num_partitions, std::shared_ptr<arrow::Schema> schema,
