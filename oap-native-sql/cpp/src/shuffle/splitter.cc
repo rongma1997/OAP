@@ -158,9 +158,9 @@ class Splitter::PartitionWriter {
       if (batch != nullptr) {
         int32_t metadata_length;
         int64_t body_length;
-        RETURN_NOT_OK(arrow::ipc::WriteRecordBatch(
-            *batch, 0, data_file_os.get(), &metadata_length, &body_length,
-            SplitterIpcWriteOptions(splitter_->options_.compression_type)));
+        RETURN_NOT_OK(arrow::ipc::WriteRecordBatch(*batch, 0, data_file_os.get(),
+                                                   &metadata_length, &body_length,
+                                                   splitter_->options_.write_options));
       }
       // write EOS
       constexpr int32_t kZeroLength = 0;
@@ -169,9 +169,8 @@ class Splitter::PartitionWriter {
     } else {
       ARROW_ASSIGN_OR_RAISE(
           auto data_file_writer,
-          arrow::ipc::NewStreamWriter(
-              data_file_os.get(), splitter_->schema_,
-              SplitterIpcWriteOptions(splitter_->options_.compression_type)));
+          arrow::ipc::NewStreamWriter(data_file_os.get(), splitter_->schema_,
+                                      splitter_->options_.write_options));
       // write last record batch, it is the only batch to write so it can't be null
       if (batch == nullptr) {
         return arrow::Status::Invalid("Partition writer got empty partition");
@@ -207,9 +206,8 @@ class Splitter::PartitionWriter {
                             arrow::io::FileOutputStream::Open(spilled_file_, true));
       ARROW_ASSIGN_OR_RAISE(
           spilled_file_writer_,
-          arrow::ipc::NewStreamWriter(
-              spilled_file_os_.get(), splitter_->schema_,
-              SplitterIpcWriteOptions(splitter_->options_.compression_type)));
+          arrow::ipc::NewStreamWriter(spilled_file_os_.get(), splitter_->schema_,
+                                      splitter_->options_.write_options));
       spilled_file_opened_ = true;
     }
     return arrow::Status::OK();
@@ -306,6 +304,11 @@ arrow::Status Splitter::Init() {
   if (options_.data_file.length() == 0) {
     ARROW_ASSIGN_OR_RAISE(options_.data_file, CreateTempShuffleFile(configured_dirs_[0]));
   }
+
+  options_.write_options.use_threads = false;
+  options_.write_options.compression = options_.compression_type;
+  options_.write_options.memory_pool = options_.memory_pool;
+
   return arrow::Status::OK();
 }
 
@@ -919,7 +922,7 @@ arrow::Status HashSplitter::ComputeAndCountPartitionId(const arrow::RecordBatch&
 
   arrow::ArrayVector outputs;
   TIME_NANO_OR_RAISE(total_compute_pid_time_,
-                     projector_->Evaluate(rb, arrow::default_memory_pool(), &outputs));
+                     projector_->Evaluate(rb, options_.memory_pool, &outputs));
   if (outputs.size() != 1) {
     return arrow::Status::Invalid("Projector result should have one field, actual is ",
                                   std::to_string(outputs.size()));

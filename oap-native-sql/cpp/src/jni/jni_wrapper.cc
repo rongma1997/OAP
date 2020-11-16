@@ -1206,7 +1206,7 @@ Java_com_intel_oap_vectorized_ShuffleSplitterJniWrapper_nativeMake(
     JNIEnv* env, jobject, jstring partitioning_name_jstr, jint num_partitions,
     jbyteArray schema_arr, jbyteArray expr_arr, jint buffer_size,
     jstring compression_type_jstr, jstring data_file_jstr, jint num_sub_dirs,
-    jstring local_dirs_jstr) {
+    jstring local_dirs_jstr, jlong memory_pool_id) {
   if (partitioning_name_jstr == NULL) {
     env->ThrowNew(illegal_argument_exception_class,
                   std::string("Short partitioning name can't be null").c_str());
@@ -1250,6 +1250,20 @@ Java_com_intel_oap_vectorized_ShuffleSplitterJniWrapper_nativeMake(
   auto data_file_c = env->GetStringUTFChars(data_file_jstr, JNI_FALSE);
   splitOptions.data_file = std::string(data_file_c);
   env->ReleaseStringUTFChars(data_file_jstr, data_file_c);
+
+  try {
+    auto* pool = reinterpret_cast<arrow::MemoryPool*>(memory_pool_id);
+    if (pool == nullptr) {
+      env->ThrowNew(illegal_argument_exception_class,
+                    "Memory pool does not exist or has been closed");
+      return -1;
+    }
+    splitOptions.memory_pool = pool;
+  } catch (const std::runtime_error& error) {
+    env->ThrowNew(unsupportedoperation_exception_class, error.what());
+  } catch (const std::exception& error) {
+    env->ThrowNew(io_exception_class, error.what());
+  }
 
   auto local_dirs = env->GetStringUTFChars(local_dirs_jstr, JNI_FALSE);
   setenv("NATIVESQL_SPARK_LOCAL_DIRS", local_dirs, 1);

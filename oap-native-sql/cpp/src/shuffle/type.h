@@ -45,6 +45,8 @@ struct SplitOptions {
 
   arrow::MemoryPool* memory_pool = arrow::default_memory_pool();
 
+  arrow::ipc::IpcWriteOptions write_options = arrow::ipc::IpcWriteOptions::Defaults();
+
   static SplitOptions Defaults();
 };
 
