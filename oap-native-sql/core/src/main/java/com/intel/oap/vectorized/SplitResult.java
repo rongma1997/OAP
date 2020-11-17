@@ -22,7 +22,7 @@ public class SplitResult {
   private final long totalComputePidTime;
   private final long totalWriteTime;
   private final long totalSpillTime;
-  private final long totalCompressTime;
+  private final long totalCompressTime; // overlaps with totalSpillTime and totalWriteTime
   private final long totalBytesWritten;
   private final long totalBytesSpilled;
   private final long[] partitionLengths;

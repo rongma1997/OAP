@@ -129,13 +129,7 @@ class Splitter::PartitionWriter {
 
   arrow::Status Spill() {
     RETURN_NOT_OK(EnsureOpened());
-    for (auto& payload : splitter_->partition_cached_recordbatch_[partition_id_]) {
-      int32_t metadata_length = 0;
-      RETURN_NOT_OK(arrow::ipc::internal::WriteIpcPayload(
-          *payload, splitter_->options_.ipc_write_options, spilled_file_os_.get(),
-          &metadata_length));
-      payload = nullptr;
-    }
+    RETURN_NOT_OK(WriteRecordBatchPayload(spilled_file_os_.get(), partition_id_));
     ClearCache();
     return arrow::Status::OK();
   }
@@ -144,27 +138,17 @@ class Splitter::PartitionWriter {
     const auto& data_file_os = splitter_->data_file_os_;
     ARROW_ASSIGN_OR_RAISE(auto before_write, data_file_os->Tell());
 
-    if (spilled_file_opened_) {
-      ARROW_ASSIGN_OR_RAISE(
-          auto spilled_file_is_,
-          arrow::io::MemoryMappedFile::Open(spilled_file_, arrow::io::FileMode::READ));
-      // copy spilled data blocks
-      ARROW_ASSIGN_OR_RAISE(auto nbytes, spilled_file_is_->GetSize());
-      ARROW_ASSIGN_OR_RAISE(auto buffer, spilled_file_is_->Read(nbytes));
-      RETURN_NOT_OK(data_file_os->Write(buffer));
+    RETURN_NOT_OK(WriteSchemaPayload(data_file_os.get()));
 
-      // close spilled file streams and delete the file
+    if (spilled_file_opened_) {
       RETURN_NOT_OK(spilled_file_os_->Close());
-      RETURN_NOT_OK(spilled_file_is_->Close());
-      auto fs = std::make_shared<arrow::fs::LocalFileSystem>();
-      RETURN_NOT_OK(fs->DeleteFile(spilled_file_));
-      bytes_spilled += nbytes;
+      RETURN_NOT_OK(MergeSpilled());
     } else {
       if (splitter_->partition_cached_recordbatch_size_[partition_id_] == 0) {
         return arrow::Status::Invalid("Partition writer got empty partition");
       }
-      RETURN_NOT_OK(WriteSchemaPayload(data_file_os.get()));
     }
+
     RETURN_NOT_OK(WriteRecordBatchPayload(data_file_os.get(), partition_id_));
     RETURN_NOT_OK(WriteEOS(data_file_os.get()));
     ClearCache();
@@ -178,6 +162,7 @@ class Splitter::PartitionWriter {
   // metrics
   int64_t bytes_spilled = 0;
   int64_t partition_length = 0;
+  int64_t compress_time = 0;
 
  private:
   arrow::Status EnsureOpened() {
@@ -187,18 +172,31 @@ class Splitter::PartitionWriter {
       ARROW_ASSIGN_OR_RAISE(spilled_file_os_,
                             arrow::io::FileOutputStream::Open(spilled_file_, true));
       spilled_file_opened_ = true;
-      RETURN_NOT_OK(WriteSchemaPayload(spilled_file_os_.get()));
     }
     return arrow::Status::OK();
   }
 
+  arrow::Status MergeSpilled() {
+    ARROW_ASSIGN_OR_RAISE(
+        auto spilled_file_is_,
+        arrow::io::MemoryMappedFile::Open(spilled_file_, arrow::io::FileMode::READ));
+    // copy spilled data blocks
+    // TODO: acquire file lock?
+    ARROW_ASSIGN_OR_RAISE(auto nbytes, spilled_file_is_->GetSize());
+    ARROW_ASSIGN_OR_RAISE(auto buffer, spilled_file_is_->Read(nbytes));
+    RETURN_NOT_OK(splitter_->data_file_os_->Write(buffer));
+
+    // close spilled file streams and delete the file
+    RETURN_NOT_OK(spilled_file_is_->Close());
+    auto fs = std::make_shared<arrow::fs::LocalFileSystem>();
+    RETURN_NOT_OK(fs->DeleteFile(spilled_file_));
+    bytes_spilled += nbytes;
+  }
+
   arrow::Status WriteSchemaPayload(arrow::io::OutputStream* os) {
-    auto payload = std::make_shared<arrow::ipc::internal::IpcPayload>();
-    arrow::ipc::DictionaryMemo dict_memo;  // unused
-    RETURN_NOT_OK(arrow::ipc::internal::GetSchemaPayload(
-        *splitter_->schema_, splitter_->options_.ipc_write_options, &dict_memo,
-        payload.get()));
+    ARROW_ASSIGN_OR_RAISE(auto payload, splitter_->GetSchemaPayload());
     int32_t metadata_length = 0;  // unused
+    // TODO: acquire file lock?
     RETURN_NOT_OK(arrow::ipc::internal::WriteIpcPayload(
         *payload, splitter_->options_.ipc_write_options, os, &metadata_length));
     return arrow::Status::OK();
@@ -207,10 +205,15 @@ class Splitter::PartitionWriter {
   arrow::Status WriteRecordBatchPayload(arrow::io::OutputStream* os,
                                         int32_t partition_id) {
     int32_t metadata_length = 0;  // unused
-    for (auto& payload : splitter_->partition_cached_recordbatch_[partition_id_]) {
+    for (auto& batch : splitter_->partition_cached_recordbatch_[partition_id_]) {
+      auto payload = std::make_shared<arrow::ipc::internal::IpcPayload>();
+      TIME_NANO_OR_RAISE(compress_time, arrow::ipc::internal::GetRecordBatchPayload(
+                                            *batch, splitter_->options_.ipc_write_options,
+                                            payload.get()));
+      // TODO: acquire file lock?
       RETURN_NOT_OK(arrow::ipc::internal::WriteIpcPayload(
           *payload, splitter_->options_.ipc_write_options, os, &metadata_length));
-      payload = nullptr;
+      batch = nullptr;
     }
     return arrow::Status::OK();
   }
@@ -355,12 +358,12 @@ arrow::Status Splitter::Stop() {
       }
     }
     if (partition_writer_[pid] != nullptr) {
-      TIME_NANO_OR_RAISE(total_write_time_,
-                         partition_writer_[pid]->WriteCachedRecordBatchAndClose());
       const auto& writer = partition_writer_[pid];
+      TIME_NANO_OR_RAISE(total_write_time_, writer->WriteCachedRecordBatchAndClose());
       partition_lengths_[pid] = writer->partition_length;
       total_bytes_written_ += writer->partition_length;
       total_bytes_spilled_ += writer->bytes_spilled;
+      total_compress_time_ += writer->compress_time;
     } else {
       partition_lengths_[pid] = 0;
     }
@@ -380,6 +383,7 @@ arrow::Status Splitter::CacheRecordBatchAndReset(int32_t partition_id) {
     auto large_binary_idx = 0;
     auto num_fields = schema_->num_fields();
     auto num_rows = partition_buffer_idx_base_[partition_id];
+    auto buffer_sizes = 0;
     std::vector<std::shared_ptr<arrow::Array>> arrays(num_fields);
     for (int i = 0; i < num_fields; ++i) {
       switch (column_type_id_[i]) {
@@ -413,15 +417,11 @@ arrow::Status Splitter::CacheRecordBatchAndReset(int32_t partition_id) {
           break;
         }
       }
+      buffer_sizes += GetBufferSizes(arrays[i]);
     }
     auto batch = arrow::RecordBatch::Make(schema_, num_rows, std::move(arrays));
-    auto payload = std::make_shared<arrow::ipc::internal::IpcPayload>();
-    TIME_NANO_OR_RAISE(total_compress_time_,
-                       arrow::ipc::internal::GetRecordBatchPayload(
-                           *batch, options_.ipc_write_options, payload.get()));
-
-    partition_cached_recordbatch_size_[partition_id] += payload->body_length;
-    partition_cached_recordbatch_[partition_id].push_back(std::move(payload));
+    partition_cached_recordbatch_[partition_id].push_back(std::move(batch));
+    partition_cached_recordbatch_size_[partition_id] += buffer_sizes;
     partition_buffer_idx_base_[partition_id] = 0;
   }
   return arrow::Status::OK();
@@ -940,6 +940,18 @@ std::string Splitter::NextSpilledFileDir() {
       (sub_dir_selection_[dir_selection_] + 1) % options_.num_sub_dirs;
   dir_selection_ = (dir_selection_ + 1) % configured_dirs_.size();
   return spilled_file_dir;
+}
+
+arrow::Result<std::shared_ptr<arrow::ipc::internal::IpcPayload>>
+Splitter::GetSchemaPayload() {
+  if (schema_payload_ != nullptr) {
+    return schema_payload_;
+  }
+  schema_payload_ = std::make_shared<arrow::ipc::internal::IpcPayload>();
+  arrow::ipc::DictionaryMemo dict_memo;  // unused
+  RETURN_NOT_OK(arrow::ipc::internal::GetSchemaPayload(
+      *schema_, options_.ipc_write_options, &dict_memo, schema_payload_.get()));
+  return schema_payload_;
 }
 
 // ----------------------------------------------------------------------

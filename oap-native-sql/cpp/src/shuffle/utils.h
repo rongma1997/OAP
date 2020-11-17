@@ -174,5 +174,13 @@ static arrow::Result<std::vector<Type::typeId>> ToSplitterTypeId(
   return splitter_type_id;
 }
 
+static int64_t GetBufferSizes(const std::shared_ptr<arrow::Array>& array) {
+  const auto& buffers = array->data()->buffers;
+  return std::accumulate(std::cbegin(buffers), std::cend(buffers), 0LL,
+                         [](int64_t sum, const std::shared_ptr<arrow::Buffer>& buf) {
+                           return buf == nullptr ? sum : sum + buf->size();
+                         });
+}
+
 }  // namespace shuffle
 }  // namespace sparkcolumnarplugin
