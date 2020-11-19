@@ -19,6 +19,7 @@
 #include <utility>
 
 #include <arrow/ipc/writer.h>
+#include <arrow/memory_pool.h>
 #include <arrow/util/bit_util.h>
 #include <gandiva/node.h>
 #include <gandiva/projector.h>
@@ -191,6 +192,7 @@ class Splitter::PartitionWriter {
     auto fs = std::make_shared<arrow::fs::LocalFileSystem>();
     RETURN_NOT_OK(fs->DeleteFile(spilled_file_));
     bytes_spilled += nbytes;
+    return arrow::Status::OK();
   }
 
   arrow::Status WriteSchemaPayload(arrow::io::OutputStream* os) {
@@ -303,6 +305,7 @@ arrow::Status Splitter::Init() {
   partition_fixed_width_buffers_.resize(num_fixed_width);
   binary_array_empirical_size_.resize(binary_array_idx_.size());
   large_binary_array_empirical_size_.resize(large_binary_array_idx_.size());
+  input_fixed_width_has_null_.resize(num_fixed_width, false);
   for (auto i = 0; i < num_fixed_width; ++i) {
     partition_fixed_width_validity_addrs_[i].resize(num_partitions_);
     partition_fixed_width_value_addrs_[i].resize(num_partitions_);
@@ -437,6 +440,7 @@ arrow::Status Splitter::AllocatePartitionBuffers(int32_t partition_id, int32_t n
   std::vector<std::shared_ptr<arrow::BinaryBuilder>> new_binary_builders;
   std::vector<std::shared_ptr<arrow::LargeBinaryBuilder>> new_large_binary_builders;
   std::vector<std::shared_ptr<arrow::ResizableBuffer>> new_value_buffers;
+  std::vector<std::shared_ptr<arrow::ResizableBuffer>> new_validity_buffers;
   for (auto i = 0; i < num_fields; ++i) {
     switch (column_type_id_[i]) {
       case Type::SHUFFLE_BINARY: {
@@ -460,7 +464,6 @@ arrow::Status Splitter::AllocatePartitionBuffers(int32_t partition_id, int32_t n
       case Type::SHUFFLE_NULL:
         break;
       default: {
-        // only allocate for value buffer
         std::shared_ptr<arrow::ResizableBuffer> value_buffer;
         if (column_type_id_[i] == Type::SHUFFLE_BIT) {
           ARROW_ASSIGN_OR_RAISE(value_buffer, arrow::AllocateResizableBuffer(
@@ -472,6 +475,17 @@ arrow::Status Splitter::AllocatePartitionBuffers(int32_t partition_id, int32_t n
                                                   options_.memory_pool));
         }
         new_value_buffers.push_back(std::move(value_buffer));
+        if (input_fixed_width_has_null_[fixed_width_idx]) {
+          std::shared_ptr<arrow::ResizableBuffer> validity_buffer;
+          ARROW_ASSIGN_OR_RAISE(
+              validity_buffer,
+              arrow::AllocateResizableBuffer(arrow::BitUtil::BytesForBits(new_size),
+                                             options_.memory_pool));
+          new_validity_buffers.push_back(std::move(validity_buffer));
+        } else {
+          new_validity_buffers.push_back(nullptr);
+        }
+        fixed_width_idx++;
         break;
       }
     }
@@ -494,11 +508,17 @@ arrow::Status Splitter::AllocatePartitionBuffers(int32_t partition_id, int32_t n
       case Type::SHUFFLE_NULL:
         break;
       default:
-        partition_fixed_width_validity_addrs_[fixed_width_idx][partition_id] = nullptr;
         partition_fixed_width_value_addrs_[fixed_width_idx][partition_id] =
             const_cast<uint8_t*>(new_value_buffers[fixed_width_idx]->data());
+        if (input_fixed_width_has_null_[fixed_width_idx]) {
+          partition_fixed_width_validity_addrs_[fixed_width_idx][partition_id] =
+              const_cast<uint8_t*>(new_validity_buffers[fixed_width_idx]->data());
+        } else {
+          partition_fixed_width_validity_addrs_[fixed_width_idx][partition_id] = nullptr;
+        }
         partition_fixed_width_buffers_[fixed_width_idx][partition_id] = {
-            nullptr, std::move(new_value_buffers[fixed_width_idx])};
+            std::move(new_validity_buffers[fixed_width_idx]),
+            std::move(new_value_buffers[fixed_width_idx])};
         fixed_width_idx++;
         break;
     }
@@ -512,12 +532,14 @@ arrow::Status Splitter::AllocateNew(int32_t partition_id, int32_t new_size) {
   int32_t retry = 0;
   while (status.IsOutOfMemory() && retry < 3) {
     // retry allocate
-    std::cout << std::to_string(++retry) << " retry to allocate new buffer for partition "
+    std::cout << status.ToString() << std::endl
+              << std::to_string(++retry) << " retry to allocate new buffer for partition "
               << std::to_string(partition_id) << std::endl;
     ARROW_ASSIGN_OR_RAISE(auto partition_to_spill, SpillLargestPartition());
     if (partition_to_spill == -1) {
       std::cout << "Failed to allocate new buffer for partition "
-                << std::to_string(partition_id) << ". Out of memory." << std::endl;
+                << std::to_string(partition_id) << ". No partition buffer to spill."
+                << std::endl;
       return status;
     }
     status = AllocatePartitionBuffers(partition_id, new_size);
@@ -546,15 +568,16 @@ arrow::Result<int32_t> Splitter::SpillLargestPartition() {
     }
     TIME_NANO_OR_RAISE(total_spill_time_, partition_writer_[partition_to_spill]->Spill());
 #ifdef DEBUG
-    std::cout << "Spilled partition " << std::to_string(partition_to_spill) << ". "
-              << std::to_string(max_size) << " bytes released." << std::endl;
+    std::cout << "Spilled partition " << std::to_string(partition_to_spill) << ", "
+              << std::to_string(max_size) << " bytes released" << std::endl;
 #endif
   }
   return partition_to_spill;
 }
 
 arrow::Status Splitter::DoSplit(const arrow::RecordBatch& rb) {
-  // scan binary arrays and large binary arrays to get empirical sizes
+  // for the first input record batch, scan binary arrays and large binary arrays to get
+  // their empirical sizes
   if (!empirical_size_calculated_) {
     auto num_rows = rb.num_rows();
     for (int i = 0; i < binary_array_idx_.size(); ++i) {
@@ -572,6 +595,13 @@ arrow::Status Splitter::DoSplit(const arrow::RecordBatch& rb) {
     empirical_size_calculated_ = true;
   }
 
+  for (auto col = 0; col < fixed_width_array_idx_.size(); ++col) {
+    auto col_idx = fixed_width_array_idx_[col];
+    if (rb.column_data(col_idx)->GetNullCount() != 0) {
+      input_fixed_width_has_null_[col] = true;
+    }
+  }
+
   // prepare partition buffers and spill if necessary
   for (auto pid = 0; pid < num_partitions_; ++pid) {
     if (partition_id_cnt_[pid] > 0 &&
@@ -583,7 +613,7 @@ arrow::Status Splitter::DoSplit(const arrow::RecordBatch& rb) {
                           : options_.buffer_size;
 #ifdef DEBUG
       std::cout << "Attempt to allocate partition buffer, partition id: " +
-                       std::to_string(pid) + ", last buffer size: " +
+                       std::to_string(pid) + ", old buffer size: " +
                        std::to_string(partition_buffer_size_[pid]) +
                        ", new buffer size: " + std::to_string(new_size) +
                        ", input record batch size: " + std::to_string(rb.num_rows())
@@ -592,6 +622,10 @@ arrow::Status Splitter::DoSplit(const arrow::RecordBatch& rb) {
       RETURN_NOT_OK(AllocateNew(pid, new_size));
     }
   }
+#ifdef DEBUG
+  std::cout << "Total bytes allocated: " << options_.memory_pool->bytes_allocated()
+            << std::endl;
+#endif
 
 #if defined(COLUMNAR_PLUGIN_USE_AVX512)
   RETURN_NOT_OK(SplitFixedWidthValueBufferAVX(rb));

@@ -115,6 +115,11 @@ class Splitter {
 
   // Cache the partition buffer/builder as compressed record batch. The partition
   // buffer/builder will be set to nullptr
+  // Two cases for caching the partition buffers as record batch:
+  // 1. Split record batch. It first calculate whether the partition
+  // buffer can hold all data according to partition id. If not, call this method and
+  // allocate new buffers. Spill will happen if OOM.
+  // 2. Stop the splitter. The record batch will be written to disk immediately.
   arrow::Status CacheRecordBatchAndReset(int32_t partition_id);
 
   // Allocate new partition buffer/builder.
@@ -154,6 +159,8 @@ class Splitter {
   bool empirical_size_calculated_ = false;
   std::vector<int32_t> binary_array_empirical_size_;
   std::vector<int32_t> large_binary_array_empirical_size_;
+
+  std::vector<bool> input_fixed_width_has_null_;
 
   // updated for each input record batch
   std::vector<int32_t> partition_id_;
