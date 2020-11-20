@@ -148,7 +148,7 @@ class Splitter {
       partition_binary_builders_;
   std::vector<std::vector<std::shared_ptr<arrow::LargeBinaryBuilder>>>
       partition_large_binary_builders_;
-  std::vector<std::vector<std::shared_ptr<arrow::RecordBatch>>>
+  std::vector<std::vector<std::shared_ptr<arrow::ipc::internal::IpcPayload>>>
       partition_cached_recordbatch_;
   std::vector<int64_t> partition_cached_recordbatch_size_;  // in bytes
 

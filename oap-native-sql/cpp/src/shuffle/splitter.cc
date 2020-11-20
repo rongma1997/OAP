@@ -207,15 +207,11 @@ class Splitter::PartitionWriter {
   arrow::Status WriteRecordBatchPayload(arrow::io::OutputStream* os,
                                         int32_t partition_id) {
     int32_t metadata_length = 0;  // unused
-    for (auto& batch : splitter_->partition_cached_recordbatch_[partition_id_]) {
-      auto payload = std::make_shared<arrow::ipc::internal::IpcPayload>();
-      TIME_NANO_OR_RAISE(compress_time, arrow::ipc::internal::GetRecordBatchPayload(
-                                            *batch, splitter_->options_.ipc_write_options,
-                                            payload.get()));
+    for (auto& payload : splitter_->partition_cached_recordbatch_[partition_id_]) {
       // TODO: acquire file lock?
       RETURN_NOT_OK(arrow::ipc::internal::WriteIpcPayload(
           *payload, splitter_->options_.ipc_write_options, os, &metadata_length));
-      batch = nullptr;
+      payload = nullptr;
     }
     return arrow::Status::OK();
   }
@@ -420,11 +416,15 @@ arrow::Status Splitter::CacheRecordBatchAndReset(int32_t partition_id) {
           break;
         }
       }
-      buffer_sizes += GetBufferSizes(arrays[i]);
+      //      buffer_sizes += GetBufferSizes(arrays[i]);
     }
     auto batch = arrow::RecordBatch::Make(schema_, num_rows, std::move(arrays));
-    partition_cached_recordbatch_[partition_id].push_back(std::move(batch));
-    partition_cached_recordbatch_size_[partition_id] += buffer_sizes;
+    auto payload = std::make_shared<arrow::ipc::internal::IpcPayload>();
+    TIME_NANO_OR_RAISE(total_compress_time_,
+                       arrow::ipc::internal::GetRecordBatchPayload(
+                           *batch, options_.ipc_write_options, payload.get()));
+    partition_cached_recordbatch_size_[partition_id] += payload->body_length;
+    partition_cached_recordbatch_[partition_id].push_back(std::move(payload));
     partition_buffer_idx_base_[partition_id] = 0;
   }
   return arrow::Status::OK();
