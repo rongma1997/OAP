@@ -1305,7 +1305,7 @@ Java_com_intel_oap_vectorized_ShuffleSplitterJniWrapper_nativeMake(
     JNIEnv* env, jobject, jstring partitioning_name_jstr, jint num_partitions,
     jbyteArray schema_arr, jbyteArray expr_arr, jint buffer_size,
     jstring compression_type_jstr, jstring data_file_jstr, jint num_sub_dirs,
-    jstring local_dirs_jstr) {
+    jstring local_dirs_jstr, jboolean prefer_spill) {
   if (partitioning_name_jstr == NULL) {
     env->ThrowNew(illegal_argument_exception_class,
                   std::string("Short partitioning name can't be null").c_str());
@@ -1332,6 +1332,7 @@ Java_com_intel_oap_vectorized_ShuffleSplitterJniWrapper_nativeMake(
   env->ReleaseStringUTFChars(partitioning_name_jstr, partitioning_name_c);
 
   auto splitOptions = SplitOptions::Defaults();
+  splitOptions.prefer_spill = prefer_spill;
   if (buffer_size > 0) {
     splitOptions.buffer_size = buffer_size;
   }

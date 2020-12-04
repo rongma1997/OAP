@@ -631,7 +631,7 @@ arrow::Status Splitter::DoSplit(const arrow::RecordBatch& rb) {
       auto new_size = partition_id_cnt_[pid] > options_.buffer_size
                           ? partition_id_cnt_[pid]
                           : options_.buffer_size;
-      if (prefer_spill) {
+      if (options_.prefer_spill) {
         if (partition_buffer_size_[pid] == 0) {  // first allocate?
           RETURN_NOT_OK(AllocatePartitionBuffers(pid, new_size));
         } else {  // not first allocate, spill

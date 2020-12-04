@@ -47,6 +47,11 @@ class ColumnarPluginConfig(conf: SparkConf) {
     conf.getOption("spark.sql.columnar.tmp_dir").getOrElse(null)
   val broadcastCacheTimeout: Int =
     conf.getInt("spark.sql.columnar.sort.broadcast.cache.timeout", defaultValue = -1)
+  // Whether to spill the partition buffers when buffers are full.
+  // If false, the partition buffers will be cached in memory first,
+  // and the cached buffers will be spilled when reach maximum memory.
+  val columnarShufflePreferSpill: Boolean =
+    conf.getBoolean("spark.oap.sql.columnar.shuffle.preferSpill", defaultValue = true)
 }
 
 object ColumnarPluginConfig {

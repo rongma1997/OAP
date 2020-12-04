@@ -194,8 +194,6 @@ class Splitter {
 
   // shared by all partition writers
   std::shared_ptr<arrow::ipc::internal::IpcPayload> schema_payload_;
-
-  bool prefer_spill = true;
 };
 
 class RoundRobinSplitter : public Splitter {
