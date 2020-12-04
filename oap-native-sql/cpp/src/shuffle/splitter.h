@@ -60,6 +60,11 @@ class Splitter {
   arrow::Status Stop();
 
   /**
+   * Spill specified partition
+   */
+  arrow::Status SpillPartition(int32_t partition_id);
+
+  /**
    * Spill the largest partition buffer
    * @return partition id. If no partition to spill, return -1
    */
@@ -113,14 +118,14 @@ class Splitter {
       const std::shared_ptr<ArrayType>& src_arr,
       const std::vector<std::shared_ptr<BuilderType>>& dst_builders, int64_t num_rows);
 
-  // Cache the partition buffer/builder as compressed record batch. The partition
-  // buffer/builder will be set to nullptr
+  // Cache the partition buffer/builder as compressed record batch. If reset buffers, the
+  // partition buffer/builder will be set to nullptr.
   // Two cases for caching the partition buffers as record batch:
   // 1. Split record batch. It first calculate whether the partition
   // buffer can hold all data according to partition id. If not, call this method and
   // allocate new buffers. Spill will happen if OOM.
   // 2. Stop the splitter. The record batch will be written to disk immediately.
-  arrow::Status CacheRecordBatchAndReset(int32_t partition_id);
+  arrow::Status CacheRecordBatch(int32_t partition_id, bool reset_buffers);
 
   // Allocate new partition buffer/builder.
   // If successful, will point partition buffer/builder to new ones, otherwise will
@@ -189,6 +194,8 @@ class Splitter {
 
   // shared by all partition writers
   std::shared_ptr<arrow::ipc::internal::IpcPayload> schema_payload_;
+
+  bool prefer_spill = true;
 };
 
 class RoundRobinSplitter : public Splitter {
