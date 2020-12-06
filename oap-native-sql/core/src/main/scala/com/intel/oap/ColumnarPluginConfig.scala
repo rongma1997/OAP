@@ -22,6 +22,8 @@ import org.apache.spark.SparkConf
 class ColumnarPluginConfig(conf: SparkConf) {
   val enableColumnarSort: Boolean =
     conf.getBoolean("spark.sql.columnar.sort", defaultValue = false)
+  val enableColumnarSortNaNCheck: Boolean =
+    conf.getBoolean("spark.sql.columnar.sort.NaNCheck", defaultValue = false)
   val enableCodegenHashAggregate: Boolean =
     conf.getBoolean("spark.sql.columnar.codegen.hashAggregate", defaultValue = false)
   val enableColumnarBroadcastJoin: Boolean =
@@ -47,6 +49,8 @@ class ColumnarPluginConfig(conf: SparkConf) {
     conf.getOption("spark.sql.columnar.tmp_dir").getOrElse(null)
   val broadcastCacheTimeout: Int =
     conf.getInt("spark.sql.columnar.sort.broadcast.cache.timeout", defaultValue = -1)
+  val hashCompare: Boolean =
+    conf.getBoolean("spark.oap.sql.columnar.hashCompare", defaultValue = false)
   // Whether to spill the partition buffers when buffers are full.
   // If false, the partition buffers will be cached in memory first,
   // and the cached buffers will be spilled when reach maximum memory.

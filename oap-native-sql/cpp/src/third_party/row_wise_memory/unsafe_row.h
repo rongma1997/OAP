@@ -11,6 +11,7 @@
 #include "third_party/row_wise_memory/native_memory.h"
 
 #define TEMP_UNSAFEROW_BUFFER_SIZE 1024
+static constexpr uint8_t kBitmask[] = {1, 2, 4, 8, 16, 32, 64, 128};
 
 /* Unsafe Row Layout (This unsafe row only used to append all fields data as continuous
  * memory, unable to be get data from)
@@ -39,6 +40,17 @@ struct UnsafeRow {
     }
   }
   int sizeInBytes() { return cursor; }
+  void reset() {
+    memset(data, 0, cursor);
+    auto validity_size = (numFields / 8) + 1;
+    cursor = validity_size;
+  }
+  bool isNullExists() {
+    for (int i = 0; i < ((numFields / 8) + 1); i++) {
+      if (data[i] != 0) return true;
+    }
+    return false;
+  }
 };
 
 static inline int calculateBitSetWidthInBytes(int numFields) {
@@ -64,11 +76,8 @@ static inline void zeroOutPaddingBytes(UnsafeRow* row, int numBytes) {
 
 static inline void setNullAt(UnsafeRow* row, int index) {
   assert((index >= 0) && (index < row->numFields));
-  auto bitSetIdx = index >> 3;     // mod 8
-  char mask = 1 << (index & 0x8);  // mod 8 and shift
-  auto word = *(row->data + bitSetIdx);
-  // set validity
-  *(row->data + bitSetIdx) = word | mask;
+  auto bitSetIdx = index >> 3;  // mod 8
+  *(row->data + bitSetIdx) |= kBitmask[index % 8];
 }
 
 template <typename T>

@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "codegen/arrow_compute/ext/array_item_index.h"
 #include "third_party/row_wise_memory/unsafe_row.h"
 
 #define MAX_HASH_MAP_CAPACITY (1 << 29)  // must be power of 2
@@ -12,6 +13,8 @@
 #define HASH_FULL -3
 
 #define loadFactor 0.5
+
+using sparkcolumnarplugin::codegen::arrowcompute::extra::ArrayItemIndex;
 
 /** HashMap Layout
  *
@@ -41,7 +44,7 @@ typedef struct {
 static inline void dump(unsafeHashMap* hm) {
   printf("=================== HashMap DUMP =======================\n");
   printf("keyarray capacity is %d\n", hm->arrayCapacity);
-  printf("bytemap capacity is %d\n", hm->mapSize);
+  printf("bytemap capacity is %lu\n", hm->mapSize);
   printf("bytesInKey is %d\n", hm->bytesInKeyArray);
   printf("cursor is %d\n", hm->cursor);
   printf("numKeys is %d\n", hm->numKeys);
@@ -189,6 +192,7 @@ static inline int getValueFromBytesMapByOffset(unsafeHashMap* hashMap,
 }
 
 static inline bool growHashBytesMap(unsafeHashMap* hashMap) {
+  std::cout << "growHashBytesMap" << std::endl;
   int oldSize = hashMap->mapSize;
   int newSize = oldSize << 1;
   char* newBytesMap = (char*)nativeRealloc(hashMap->bytesMap, newSize, MEMTYPE_HASHMAP);
@@ -201,6 +205,7 @@ static inline bool growHashBytesMap(unsafeHashMap* hashMap) {
 
 static inline bool growAndRehashKeyArray(unsafeHashMap* hashMap) {
   assert(hashMap->keyArray != NULL);
+  std::cout << "growAndRehashKeyArray" << std::endl;
 
   int oldCapacity = hashMap->arrayCapacity;
   int newCapacity = (oldCapacity << 1);
@@ -328,7 +333,8 @@ static inline int safeLookup(unsafeHashMap* hashMap, const char* keyRow, size_t 
       if ((int)keyHashCode == hashVal) {
         // Full hash code matches.  Let's compare the keys for equality.
         char* record = base + KeyAddressOffset;
-        if (memcmp(keyRow, getKeyFromBytesMap(record), keyLength)) {
+        if ((getKeyLength(record) == keyLength) &&
+            memcmp(keyRow, getKeyFromBytesMap(record), keyLength) == 0) {
           return 0;
         }
       }
@@ -392,7 +398,7 @@ static inline int safeLookup(unsafeHashMap* hashMap, std::shared_ptr<UnsafeRow> 
  */
 template <typename CType>
 static inline int safeLookup(unsafeHashMap* hashMap, CType keyRow, int hashVal,
-                             std::vector<char*>* output) {
+                             std::vector<ArrayItemIndex>* output) {
   assert(hashMap->keyArray != NULL);
   int mask = hashMap->arrayCapacity - 1;
   int pos = hashVal & mask;
@@ -415,8 +421,9 @@ static inline int safeLookup(unsafeHashMap* hashMap, CType keyRow, int hashVal,
         if (keySizeInBytes > 8) {
           if (keyRow == *(CType*)(keyArrayBase + pos * keySizeInBytes + 8)) {
             char* record = base + KeyAddressOffset;
+            (*output).clear();
             while (record != nullptr) {
-              (*output).push_back(getValueFromBytesMap(record));
+              (*output).push_back(*((ArrayItemIndex*)getValueFromBytesMap(record)));
               KeyAddressOffset = getNextOffsetFromBytesMap(record);
               record = KeyAddressOffset == 0 ? nullptr : (base + KeyAddressOffset);
             }
@@ -427,8 +434,9 @@ static inline int safeLookup(unsafeHashMap* hashMap, CType keyRow, int hashVal,
           char* record = base + KeyAddressOffset;
           if (keyRow == *((CType*)getKeyFromBytesMap(record))) {
             // there may be more than one record
+            (*output).clear();
             while (record != nullptr) {
-              (*output).push_back(getValueFromBytesMap(record));
+              (*output).push_back(*((ArrayItemIndex*)getValueFromBytesMap(record)));
               KeyAddressOffset = getNextOffsetFromBytesMap(record);
               record = KeyAddressOffset == 0 ? nullptr : (base + KeyAddressOffset);
             }
@@ -447,7 +455,7 @@ static inline int safeLookup(unsafeHashMap* hashMap, CType keyRow, int hashVal,
 }
 
 static inline int safeLookup(unsafeHashMap* hashMap, const char* keyRow, size_t keyRowLen,
-                             int hashVal, std::vector<char*>* output) {
+                             int hashVal, std::vector<ArrayItemIndex>* output) {
   assert(hashMap->keyArray != NULL);
   int mask = hashMap->arrayCapacity - 1;
   int pos = hashVal & mask;
@@ -468,10 +476,12 @@ static inline int safeLookup(unsafeHashMap* hashMap, const char* keyRow, size_t 
       if ((int)keyHashCode == hashVal) {
         // Full hash code matches.  Let's compare the keys for equality.
         char* record = base + KeyAddressOffset;
-        if (memcmp(keyRow, getKeyFromBytesMap(record), keyLength)) {
+        if ((getKeyLength(record) == keyLength) &&
+            memcmp(keyRow, getKeyFromBytesMap(record), keyLength) == 0) {
           // there may be more than one record
+          (*output).clear();
           while (record != nullptr) {
-            (*output).push_back(getValueFromBytesMap(record));
+            (*output).push_back(*((ArrayItemIndex*)getValueFromBytesMap(record)));
             KeyAddressOffset = getNextOffsetFromBytesMap(record);
             record = KeyAddressOffset == 0 ? nullptr : (base + KeyAddressOffset);
           }
@@ -489,7 +499,7 @@ static inline int safeLookup(unsafeHashMap* hashMap, const char* keyRow, size_t 
 }
 
 static inline int safeLookup(unsafeHashMap* hashMap, std::shared_ptr<UnsafeRow> keyRow,
-                             int hashVal, std::vector<char*>* output) {
+                             int hashVal, std::vector<ArrayItemIndex>* output) {
   assert(hashMap->keyArray != NULL);
   int mask = hashMap->arrayCapacity - 1;
   int pos = hashVal & mask;
@@ -514,8 +524,9 @@ static inline int safeLookup(unsafeHashMap* hashMap, std::shared_ptr<UnsafeRow> 
         if ((getKeyLength(record) == keyLength) &&
             (memcmp(keyRow->data, getKeyFromBytesMap(record), keyLength) == 0)) {
           // there may be more than one record
+          (*output).clear();
           while (record != nullptr) {
-            (*output).push_back(getValueFromBytesMap(record));
+            (*output).push_back(*((ArrayItemIndex*)getValueFromBytesMap(record)));
             KeyAddressOffset = getNextOffsetFromBytesMap(record);
             record = KeyAddressOffset == 0 ? nullptr : (base + KeyAddressOffset);
           }
@@ -707,6 +718,98 @@ static inline bool append(unsafeHashMap* hashMap, CType keyRow, int hashVal, cha
   auto total_key_length = ((8 + klen + vlen) << 16) | klen;
   *((int*)record) = total_key_length;
   // memcpy(record + 4, &keyRow, klen);
+  memcpy(record + 4 + klen, value, vlen);
+  *((int*)(record + 4 + klen + vlen)) = 0;
+
+  // See if we need to grow keyArray
+  int growthThreshold = (int)(hashMap->arrayCapacity * loadFactor);
+  if ((hashMap->numKeys > growthThreshold) &&
+      (hashMap->arrayCapacity < MAX_HASH_MAP_CAPACITY)) {
+    if (!growAndRehashKeyArray(hashMap)) hashMap->needSpill = true;
+  }
+
+  return true;
+}
+
+/**
+ * append is used for same key may has multiple value scenario
+ * if key does not exists, insert key and append a new record for key value
+ * if key exists, append a new record and linked by previous same key record
+ *
+ * return should be a flag of succession of the append.
+ **/
+static inline bool append(unsafeHashMap* hashMap, const char* keyRow, size_t keyLength,
+                          int hashVal, char* value, size_t value_size) {
+  assert(hashMap->keyArray != NULL);
+
+  const int cursor = hashMap->cursor;
+  const int mask = hashMap->arrayCapacity - 1;
+
+  int pos = hashVal & mask;
+  int step = 1;
+
+  char* base = hashMap->bytesMap;
+  int klen = keyLength;
+  const int vlen = value_size;
+  const int recordLength = 4 + klen + vlen + 4;
+  char* record = nullptr;
+
+  int keySizeInBytes = hashMap->bytesInKeyArray;
+  char* keyArrayBase = hashMap->keyArray;
+
+  while (true) {
+    int KeyAddressOffset = *(int*)(keyArrayBase + pos * keySizeInBytes);
+    int keyHashCode = *(int*)(keyArrayBase + pos * keySizeInBytes + 4);
+
+    if (KeyAddressOffset < 0) {
+      // This is a new key.
+      int keyArrayPos = pos;
+      record = base + cursor;
+      // Update keyArray in hashMap
+      hashMap->numKeys++;
+      *(int*)(keyArrayBase + pos * keySizeInBytes) = cursor;
+      *(int*)(keyArrayBase + pos * keySizeInBytes + 4) = hashVal;
+      hashMap->cursor += recordLength;
+      break;
+    } else {
+      record = base + KeyAddressOffset;
+      if (((int)keyHashCode == hashVal) &&
+          (memcmp(keyRow, getKeyFromBytesMap(record), keyLength) == 0)) {
+        // Full hash code matches.  Let's compare the keys for equality.
+        if (cursor + recordLength >= hashMap->mapSize) {
+          // Grow the hash table
+          assert(growHashBytesMap(hashMap));
+          base = hashMap->bytesMap;
+          record = base + cursor;
+        }
+
+        // link current record next ptr to new record
+        int cur_record_lengh = *((int*)record) >> 16;
+        auto nextOffset = (int*)(record + cur_record_lengh - 4);
+        while (*nextOffset != 0) {
+          record = base + *nextOffset;
+          cur_record_lengh = *((int*)record) >> 16;
+          nextOffset = (int*)(record + cur_record_lengh - 4);
+        }
+        *nextOffset = cursor;
+        record = base + cursor;
+        klen = 0;
+
+        // Update hashMap
+        hashMap->cursor += (4 + klen + vlen + 4);
+        break;
+      }
+    }
+
+    pos = (pos + step) & mask;
+    step++;
+  }
+
+  // copy keyRow and valueRow into hashmap
+  assert((klen & 0xff00) == 0);
+  auto total_key_length = ((8 + klen + vlen) << 16) | klen;
+  *((int*)record) = total_key_length;
+  memcpy(record + 4, keyRow, klen);
   memcpy(record + 4 + klen, value, vlen);
   *((int*)(record + 4 + klen + vlen)) = 0;
 
