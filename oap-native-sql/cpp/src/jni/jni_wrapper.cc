@@ -181,7 +181,6 @@ std::shared_ptr<ParquetFileWriter> GetFileWriter(JNIEnv* env, jlong id) {
 extern "C" {
 #endif
 
-
 class ReserveMemory : public arrow::ReservationListener {
  public:
   ReserveMemory(JavaVM* vm, jobject memory_reservation)
@@ -215,9 +214,7 @@ class ReserveMemory : public arrow::ReservationListener {
     return arrow::Status::OK();
   }
 
-  jobject GetMemoryReservation() {
-    return memory_reservation_;
-  }
+  jobject GetMemoryReservation() { return memory_reservation_; }
 
  private:
   JavaVM* vm_;
@@ -262,8 +259,8 @@ jint JNI_OnLoad(JavaVM* vm, void* reserved) {
 
   split_result_class =
       CreateGlobalClassReference(env, "Lcom/intel/oap/vectorized/SplitResult;");
-  split_result_constructor = GetMethodID(env, split_result_class, "<init>", "(JJJJJJ[J)V");
-
+  split_result_constructor =
+      GetMethodID(env, split_result_class, "<init>", "(JJJJJJ[J)V");
 
   native_memory_reservation_class =
       CreateGlobalClassReference(env,
@@ -313,13 +310,14 @@ void JNI_OnUnload(JavaVM* vm, void* reserved) {
   default_memory_pool_id = -1L;
 }
 
-JNIEXPORT jlong JNICALL Java_com_intel_oap_vectorized_ExpressionMemoryPool_getDefaultMemoryPool
-    (JNIEnv *, jclass) {
+JNIEXPORT jlong JNICALL
+Java_com_intel_oap_vectorized_ExpressionMemoryPool_getDefaultMemoryPool(JNIEnv*, jclass) {
   return default_memory_pool_id;
 }
 
-JNIEXPORT jlong JNICALL Java_com_intel_oap_vectorized_ExpressionMemoryPool_createListenableMemoryPool
-    (JNIEnv* env, jclass, jobject jlistener) {
+JNIEXPORT jlong JNICALL
+Java_com_intel_oap_vectorized_ExpressionMemoryPool_createListenableMemoryPool(
+    JNIEnv* env, jclass, jobject jlistener) {
   jobject jlistener_ref = env->NewGlobalRef(jlistener);
   JavaVM* vm;
   if (env->GetJavaVM(&vm) != JNI_OK) {
@@ -333,8 +331,9 @@ JNIEXPORT jlong JNICALL Java_com_intel_oap_vectorized_ExpressionMemoryPool_creat
   return memory_pool_holder.Insert(memory_pool);
 }
 
-JNIEXPORT void JNICALL Java_com_intel_oap_vectorized_ExpressionMemoryPool_releaseMemoryPool
-    (JNIEnv* env, jclass, jlong memory_pool_id) {
+JNIEXPORT void JNICALL
+Java_com_intel_oap_vectorized_ExpressionMemoryPool_releaseMemoryPool(
+    JNIEnv* env, jclass, jlong memory_pool_id) {
   arrow::ReservationListenableMemoryPool* pool =
       dynamic_cast<arrow::ReservationListenableMemoryPool*>(
           memory_pool_holder.Lookup(memory_pool_id));
@@ -1385,7 +1384,8 @@ Java_com_intel_oap_vectorized_ShuffleSplitterJniWrapper_nativeMake(
   }
 
   jclass tc_cls = env->FindClass("org/apache/spark/TaskContext");
-  jmethodID get_tc_mid = env->GetStaticMethodID(tc_cls, "get", "()Lorg/apache/spark/TaskContext;");
+  jmethodID get_tc_mid =
+      env->GetStaticMethodID(tc_cls, "get", "()Lorg/apache/spark/TaskContext;");
   jobject tc_obj = env->CallStaticObjectMethod(tc_cls, get_tc_mid);
   if (tc_obj == NULL) {
     std::cout << "TaskContext.get() return NULL" << std::endl;
@@ -1441,8 +1441,9 @@ JNIEXPORT void JNICALL Java_com_intel_oap_vectorized_ShuffleSplitterJniWrapper_s
   jlong* in_buf_sizes = env->GetLongArrayElements(buf_sizes, JNI_FALSE);
 
   std::shared_ptr<arrow::RecordBatch> in;
-  auto status = MakeRecordBatch(splitter->input_schema(), num_rows, (int64_t*)in_buf_addrs,
-                                (int64_t*)in_buf_sizes, in_bufs_len, &in);
+  auto status =
+      MakeRecordBatch(splitter->input_schema(), num_rows, (int64_t*)in_buf_addrs,
+                      (int64_t*)in_buf_sizes, in_bufs_len, &in);
 
   env->ReleaseLongArrayElements(buf_addrs, in_buf_addrs, JNI_ABORT);
   env->ReleaseLongArrayElements(buf_sizes, in_buf_sizes, JNI_ABORT);
@@ -1493,8 +1494,9 @@ JNIEXPORT jobject JNICALL Java_com_intel_oap_vectorized_ShuffleSplitterJniWrappe
   env->SetLongArrayRegion(partition_length_arr, 0, partition_length.size(), src);
   jobject split_result = env->NewObject(
       split_result_class, split_result_constructor, splitter->TotalComputePidTime(),
-      splitter->TotalWriteTime(), splitter->TotalSpillTime(), splitter->TotalCompressTime(),
-      splitter->TotalBytesWritten(), splitter->TotalBytesSpilled(), partition_length_arr);
+      splitter->TotalWriteTime(), splitter->TotalSpillTime(),
+      splitter->TotalCompressTime(), splitter->TotalBytesWritten(),
+      splitter->TotalBytesSpilled(), partition_length_arr);
 
   return split_result;
 }
@@ -1579,8 +1581,8 @@ Java_com_intel_oap_vectorized_ShuffleDecompressionJniWrapper_decompress(
   // decompress buffers
   auto options = arrow::ipc::IpcReadOptions::Defaults();
   options.use_threads = false;
-  auto status =
-      DecompressBuffers(compression_type, options, (uint8_t*)in_buf_mask, input_buffers);
+  auto status = DecompressBuffers(compression_type, options, (uint8_t*)in_buf_mask,
+                                  input_buffers, schema->fields());
   if (!status.ok()) {
     env->ThrowNew(
         io_exception_class,
