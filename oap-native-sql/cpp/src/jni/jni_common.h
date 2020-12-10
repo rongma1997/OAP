@@ -266,11 +266,11 @@ Status DecompressBuffersByType(
     const uint8_t* buf_mask, std::vector<std::shared_ptr<arrow::Buffer>>& buffers,
     const std::vector<std::shared_ptr<arrow::Field>>& schema_fields) {
   std::unique_ptr<arrow::util::Codec> codec;
-  std::unique_ptr<arrow::util::Codec> fastpfor32_codec;
-  std::unique_ptr<arrow::util::Codec> fastpfor64_codec;
+  std::unique_ptr<arrow::util::Codec> int32_codec;
+  std::unique_ptr<arrow::util::Codec> int64_codec;
   ARROW_ASSIGN_OR_RAISE(codec, arrow::util::Codec::Create(arrow::Compression::LZ4_FRAME));
-  ARROW_ASSIGN_OR_RAISE(fastpfor32_codec, arrow::util::Codec::CreateInt32(compression));
-  ARROW_ASSIGN_OR_RAISE(fastpfor64_codec, arrow::util::Codec::CreateInt64(compression));
+  ARROW_ASSIGN_OR_RAISE(int32_codec, arrow::util::Codec::CreateInt32(compression));
+  ARROW_ASSIGN_OR_RAISE(int64_codec, arrow::util::Codec::CreateInt64(compression));
 
   int32_t buffer_idx = 0;
   for (const auto& field : schema_fields) {
@@ -295,11 +295,11 @@ Status DecompressBuffersByType(
       switch (layout.kind) {
         case arrow::DataTypeLayout::BufferKind::FIXED_WIDTH:
           if (layout.byte_width == 4 && field->type()->id() != arrow::Type::FLOAT) {
-            RETURN_NOT_OK(DecompressBuffer(*buffer, fastpfor32_codec.get(), &buffer,
+            RETURN_NOT_OK(DecompressBuffer(*buffer, int32_codec.get(), &buffer,
                                            options.memory_pool));
           } else if (layout.byte_width == 8 &&
                      field->type()->id() != arrow::Type::DOUBLE) {
-            RETURN_NOT_OK(DecompressBuffer(*buffer, fastpfor64_codec.get(), &buffer,
+            RETURN_NOT_OK(DecompressBuffer(*buffer, int64_codec.get(), &buffer,
                                            options.memory_pool));
           } else {
             RETURN_NOT_OK(
