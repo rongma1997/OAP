@@ -117,7 +117,12 @@ case class ColumnarPreOverrides(conf: SparkConf) extends Rule[SparkPlan] {
         val child =
           if (nc == null) replaceWithColumnarPlan(plan.child) else nc(0)
         logDebug(s"Columnar Processing for ${plan.getClass} is currently supported.")
-        new ColumnarSortExec(plan.sortOrder, plan.global, child, plan.testSpillFrequency)
+        child match {
+          case CoalesceBatchesExec(fwdChild: SparkPlan) =>
+            new ColumnarSortExec(plan.sortOrder, plan.global, fwdChild, plan.testSpillFrequency)
+          case _ =>
+            new ColumnarSortExec(plan.sortOrder, plan.global, child, plan.testSpillFrequency)
+        }
       } else {
         val children = applyChildrenWithStrategy(plan)
         logDebug(s"Columnar Processing for ${plan.getClass} is not currently supported.")
@@ -243,15 +248,24 @@ case class ColumnarPreOverrides(conf: SparkConf) extends Rule[SparkPlan] {
         val left = replaceWithColumnarPlan(plan.left)
         val right = replaceWithColumnarPlan(plan.right)
         logDebug(s"Columnar Processing for ${plan.getClass} is currently supported.")
-        val res = new ColumnarSortMergeJoinExec(
-          plan.leftKeys,
-          plan.rightKeys,
-          plan.joinType,
-          plan.condition,
-          left,
-          right,
-          plan.isSkewJoin)
-        res
+
+        var newPlan: SparkPlan = plan.withNewChildren(List(left, right))
+        try {
+          val res = new ColumnarSortMergeJoinExec(
+            plan.leftKeys,
+            plan.rightKeys,
+            plan.joinType,
+            plan.condition,
+            left,
+            right,
+            plan.isSkewJoin)
+          newPlan = res
+        } catch {
+          case e: UnsupportedOperationException =>
+            System.out.println(
+              s"ColumnarSortMergeJoinExec Fall back to use SortMergeJoinExec, error is ${e.getMessage()}")
+        }
+        newPlan
       } else {
         val children = plan.children.map(replaceWithColumnarPlan(_))
         logDebug(s"Columnar Processing for ${plan.getClass} is not currently supported.")
