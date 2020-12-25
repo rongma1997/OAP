@@ -59,6 +59,9 @@ static jmethodID serializable_obj_builder_constructor;
 static jclass split_result_class;
 static jmethodID split_result_constructor;
 
+static jclass metrics_builder_class;
+static jmethodID metrics_builder_constructor;
+
 using arrow::jni::ConcurrentMap;
 static ConcurrentMap<std::shared_ptr<arrow::Buffer>> buffer_holder_;
 
@@ -211,7 +214,13 @@ jint JNI_OnLoad(JavaVM* vm, void* reserved) {
 
   split_result_class =
       CreateGlobalClassReference(env, "Lcom/intel/oap/vectorized/SplitResult;");
-  split_result_constructor = GetMethodID(env, split_result_class, "<init>", "(JJJJJJ[J)V");
+  split_result_constructor =
+      GetMethodID(env, split_result_class, "<init>", "(JJJJJJ[J)V");
+
+  metrics_builder_class =
+      CreateGlobalClassReference(env, "Lcom/intel/oap/vectorized/MetricsObject;");
+  metrics_builder_constructor =
+      GetMethodID(env, metrics_builder_class, "<init>", "([J[J)V");
 
   return JNI_VERSION;
 }
@@ -256,8 +265,9 @@ Java_com_intel_oap_vectorized_ExpressionEvaluatorJniWrapper_nativeSetBatchSize(
 
 JNIEXPORT jlong JNICALL
 Java_com_intel_oap_vectorized_ExpressionEvaluatorJniWrapper_nativeBuild(
-    JNIEnv* env, jobject obj, jlong memory_pool_id, jbyteArray schema_arr, jbyteArray exprs_arr,
-    jbyteArray res_schema_arr, jboolean return_when_finish = false) {
+    JNIEnv* env, jobject obj, jlong memory_pool_id, jbyteArray schema_arr,
+    jbyteArray exprs_arr, jbyteArray res_schema_arr,
+    jboolean return_when_finish = false) {
   arrow::Status status;
 
   std::shared_ptr<arrow::Schema> schema;
@@ -328,8 +338,8 @@ Java_com_intel_oap_vectorized_ExpressionEvaluatorJniWrapper_nativeBuild(
 
 JNIEXPORT jlong JNICALL
 Java_com_intel_oap_vectorized_ExpressionEvaluatorJniWrapper_nativeBuildWithFinish(
-    JNIEnv* env, jobject obj, jlong memory_pool_id, jbyteArray schema_arr, jbyteArray exprs_arr,
-    jbyteArray finish_exprs_arr) {
+    JNIEnv* env, jobject obj, jlong memory_pool_id, jbyteArray schema_arr,
+    jbyteArray exprs_arr, jbyteArray finish_exprs_arr) {
   arrow::Status status;
 
   std::shared_ptr<arrow::Schema> schema;
@@ -629,6 +639,21 @@ JNIEXPORT jboolean JNICALL Java_com_intel_oap_vectorized_BatchIterator_nativeHas
     JNIEnv* env, jobject obj, jlong id) {
   auto iter = GetBatchIterator(env, id);
   return iter->HasNext();
+}
+
+JNIEXPORT jobject JNICALL Java_com_intel_oap_vectorized_BatchIterator_nativeFetchMetrics(
+    JNIEnv* env, jobject obj, jlong id) {
+  auto iter = GetBatchIterator(env, id);
+  std::shared_ptr<Metrics> metrics;
+  iter->GetMetrics(&metrics);
+  auto output_length_list = env->NewLongArray(metrics->num_metrics);
+  auto process_time_list = env->NewLongArray(metrics->num_metrics);
+  env->SetLongArrayRegion(output_length_list, 0, metrics->num_metrics,
+                          metrics->output_length);
+  env->SetLongArrayRegion(process_time_list, 0, metrics->num_metrics,
+                          metrics->process_time);
+  return env->NewObject(metrics_builder_class, metrics_builder_constructor,
+                        output_length_list, process_time_list);
 }
 
 JNIEXPORT jobject JNICALL Java_com_intel_oap_vectorized_BatchIterator_nativeNext(
